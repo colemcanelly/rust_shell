@@ -428,14 +428,25 @@ mod test {
                 QuoteEnd('\"'),
             ]
         );
+        assert_eq!(
+            r#"echo "$(ls -a)""#.tokenize(),
+            vec![
+                CmdArg("echo".into()),
+                QuoteBegin('\"'),
+                QuoteContents("".into()),
+                DollarSign,
+                GroupOpen,
+                CmdArg("ls".into()),
+                CmdArg("-a".into()),
+                GroupClose,
+                QuoteContents("".into()),
+                QuoteEnd('\"'),
+            ]
+        );
     }
 
     #[test]
     fn complex() {
-        // assert_eq!(
-        //     r#"echo "$(ls -a)""#.tokenize(),
-        //     vec!["echo", "\"", "$", "(", "ls", "-a", ")", "\""]
-        // );
         assert_eq!(
             "ls -l 'file name' | grep test $VAR # This is a comment".tokenize(),
             vec![
