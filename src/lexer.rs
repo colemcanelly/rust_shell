@@ -1,23 +1,34 @@
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ControlFlow {
+    IF,
+    THEN,
+    ELSE,
+    ENDIF,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     CmdArg(String),
     Operator(String),
-    ControlOperator(String),
-    Variable(String),
+    ControlOperator(ControlFlow),
+    Identifier(String),
+    DollarSign,
+    GroupOpen,
+    GroupClose,
     Wildcard(String),
-    Quote(String),
-    // QuoteFragment(String),
+    QuoteBegin(char),
+    QuoteContents(String),
+    QuoteEnd(char),
     Comment(String),
 }
 
 mod state_machine {
-    use super::Token;
+    use super::{ControlFlow, Token};
+    use std::mem;
 
-
-    const COMMAND_CHARS: &[char] = &['_', '~', '/', '.'];
+    const VALID_PATH_CHARS: &[char] = &['_', '~', '/', '.'];
     const VARIABLE_CHARS: &[char] = &['_', '{', '}'];
-    const CONTROL_FLOW: &[&str] = &["if", "then", "else", "fi"];
-    
+
     #[derive(Copy, Clone, Debug, Default, PartialEq)]
     pub enum LexerState {
         #[default]
@@ -30,105 +41,126 @@ mod state_machine {
         InComment,
     }
 
-    pub fn tokenize_char(
-        cur_state: LexerState,
-        c: char,
-        cur_tok: &mut String,
-        toks: &mut Vec<Token>,
-    ) -> LexerState {
-        match (cur_state, c) {
-            (LexerState::Start, c) if c.is_whitespace() => LexerState::Start,
-            (LexerState::Start, '\'' | '\"') => {
-                cur_tok.push(c);
-                LexerState::InQuote(c)
-            }
-            (LexerState::Start, '|' | '>' | '<' | '=' | ';') => {
-                if c == '<' || c == '>' {
-                    cur_tok.push(c);
-                    LexerState::InOperator(c)
-                } else {
-                    toks.push(Token::Operator(c.to_string()));
+    impl LexerState {
+        pub fn tokenize_char(
+            self,
+            ch: char,
+            cur_tok: &mut String,
+            toks: &mut Vec<Token>,
+            state_stack: &mut Vec<LexerState>,
+        ) -> LexerState {
+            match (self, ch) {
+                (LexerState::Start, c) if c.is_whitespace() => LexerState::Start,
+                (LexerState::Start, '\'' | '\"') => {
+                    toks.push(Token::QuoteBegin(ch));
+                    LexerState::InQuote(ch)
+                }
+                (LexerState::Start, '>' | '<') => {
+                    cur_tok.push(ch);
+                    LexerState::InOperator(ch)
+                }
+                (LexerState::Start, '|' | '=' | ';') => {
+                    toks.push(Token::Operator(ch.into()));
                     LexerState::Start
                 }
-            }
-            (LexerState::Start, '#') => {
-                cur_tok.push(c);
-                LexerState::InComment
-            }
-            (LexerState::Start, '$') => {
-                cur_tok.push(c);
-                LexerState::InVariable
-            }
-            (LexerState::Start, _) => {
-                cur_tok.push(c);
-                LexerState::InCmdArg
-            }
-            (LexerState::InCmdArg, c)
-                if c.is_alphanumeric() || COMMAND_CHARS.contains(&c) || c == '-' =>
-            {
-                cur_tok.push(c);
-                LexerState::InCmdArg
-            }
-            (LexerState::InCmdArg, '*') => {
-                cur_tok.push(c);
-                LexerState::InWildcard
-            }
-            (LexerState::InCmdArg, _) => {
-                if CONTROL_FLOW.contains(&cur_tok.as_str()) {
-                    toks.push(Token::ControlOperator(cur_tok.clone()));
-                } else {
-                    toks.push(Token::CmdArg(cur_tok.clone()));
+                (LexerState::Start, '#') => {
+                    cur_tok.push(ch);
+                    LexerState::InComment
                 }
-                cur_tok.clear();
-                tokenize_char(LexerState::Start, c, cur_tok, toks)
-            }
-            (LexerState::InWildcard, c) if c.is_alphanumeric() || COMMAND_CHARS.contains(&c) => {
-                cur_tok.push(c);
-                LexerState::InWildcard
-            }
-            (LexerState::InWildcard, _) => {
-                toks.push(Token::Wildcard(cur_tok.clone()));
-                cur_tok.clear();
-                tokenize_char(LexerState::Start, c, cur_tok, toks)
-            }
-            (LexerState::InOperator(io_dir), c) if c == io_dir => {
-                cur_tok.push(c);
-                toks.push(Token::Operator(cur_tok.to_string()));
-                cur_tok.clear();
-                LexerState::Start
-            }
-            (LexerState::InOperator(_), _) => {
-                toks.push(Token::Operator(cur_tok.to_string()));
-                cur_tok.clear();
-                tokenize_char(LexerState::Start, c, cur_tok, toks)
-            }
-            (LexerState::InQuote(quote_char), c) if c != quote_char => {
-                cur_tok.push(c);
-                LexerState::InQuote(quote_char)
-            }
-            (LexerState::InQuote(_), _) => {
-                cur_tok.push(c);
-                toks.push(Token::Quote(cur_tok.clone()));
-                cur_tok.clear();
-                LexerState::Start
-            }
-            (LexerState::InVariable, c) if c.is_alphanumeric() || VARIABLE_CHARS.contains(&c) => {
-                cur_tok.push(c);
-                LexerState::InVariable
-            }
-            (LexerState::InVariable, _) => {
-                toks.push(Token::Variable(cur_tok.clone()));
-                cur_tok.clear();
-                tokenize_char(LexerState::Start, c, cur_tok, toks)
-            }
-            (LexerState::InComment, '\n') => {
-                toks.push(Token::Comment(cur_tok.clone()));
-                cur_tok.clear();
-                LexerState::Start
-            }
-            (LexerState::InComment, c) => {
-                cur_tok.push(c);
-                LexerState::InComment
+                (LexerState::Start, '$') => {
+                    toks.push(Token::DollarSign);
+                    LexerState::InVariable
+                }
+                (LexerState::Start | LexerState::InVariable | LexerState::InOperator(_), '(') => {
+                    toks.push(Token::GroupOpen);
+                    LexerState::Start
+                }
+                (LexerState::Start | LexerState::InVariable | LexerState::InCmdArg, ')') => {
+                    toks.push(Token::CmdArg(mem::take(cur_tok)));
+                    toks.push(Token::GroupClose);
+                    state_stack.pop().or(Some(LexerState::Start)).unwrap()
+                }
+                (LexerState::Start, _) => {
+                    cur_tok.push(ch);
+                    LexerState::InCmdArg
+                }
+                (LexerState::InCmdArg, c)
+                    if c.is_alphanumeric() || VALID_PATH_CHARS.contains(&c) || c == '-' =>
+                {
+                    cur_tok.push(c);
+                    LexerState::InCmdArg
+                }
+                (LexerState::InCmdArg, '*') => {
+                    cur_tok.push(ch);
+                    LexerState::InWildcard
+                }
+                (LexerState::InCmdArg, _) => {
+                    toks.push(match cur_tok.as_str() {
+                        "if" => Token::ControlOperator(ControlFlow::IF),
+                        "then" => Token::ControlOperator(ControlFlow::THEN),
+                        "else" => Token::ControlOperator(ControlFlow::ELSE),
+                        "fi" => Token::ControlOperator(ControlFlow::ENDIF),
+                        _ => Token::CmdArg(mem::take(cur_tok)),
+                    });
+                    cur_tok.clear();
+                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
+                }
+                (LexerState::InWildcard, c)
+                    if c.is_alphanumeric() || VALID_PATH_CHARS.contains(&c) =>
+                {
+                    cur_tok.push(c);
+                    LexerState::InWildcard
+                }
+                (LexerState::InWildcard, _) => {
+                    toks.push(Token::Wildcard(mem::take(cur_tok)));
+                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
+                }
+                (LexerState::InOperator(io_dir), c) if c == io_dir => {
+                    cur_tok.push(c);
+                    toks.push(Token::Operator(mem::take(cur_tok)));
+                    LexerState::Start
+                }
+                (LexerState::InOperator(_), _) => {
+                    toks.push(Token::Operator(mem::take(cur_tok)));
+                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
+                }
+                (LexerState::InVariable, c)
+                    if c.is_alphanumeric() || VARIABLE_CHARS.contains(&c) =>
+                {
+                    cur_tok.push(c);
+                    LexerState::InVariable
+                }
+                (LexerState::InVariable, _) => {
+                    toks.push(Token::Identifier(mem::take(cur_tok)));
+                    state_stack
+                        .pop()
+                        .or(Some(LexerState::Start))
+                        .unwrap()
+                        .tokenize_char(ch, cur_tok, toks, state_stack)
+                }
+                (LexerState::InQuote(q), '$') => {
+                    toks.push(Token::QuoteContents(mem::take(cur_tok)));
+                    toks.push(Token::DollarSign);
+                    state_stack.push(LexerState::InQuote(q));
+                    LexerState::InVariable
+                }
+                (LexerState::InQuote(q), c) if c != q => {
+                    cur_tok.push(c);
+                    LexerState::InQuote(q)
+                }
+                (LexerState::InQuote(_), _) => {
+                    toks.push(Token::QuoteContents(mem::take(cur_tok)));
+                    toks.push(Token::QuoteEnd(ch));
+                    LexerState::Start
+                }
+                (LexerState::InComment, '\n') => {
+                    toks.push(Token::Comment(mem::take(cur_tok)));
+                    LexerState::Start
+                }
+                (LexerState::InComment, c) => {
+                    cur_tok.push(c);
+                    LexerState::InComment
+                }
             }
         }
     }
@@ -138,26 +170,30 @@ pub trait Tokenize {
     fn tokenize(self) -> Vec<Token>;
 }
 
-impl<S: AsRef<str>> Tokenize for S {
+impl<S> Tokenize for S
+where
+    S: AsRef<str>,
+{
     fn tokenize(self) -> Vec<Token> {
-        use crate::lexer::state_machine::{tokenize_char, LexerState};
+        use crate::lexer::state_machine::LexerState;
 
         let mut toks = vec![];
+        let mut prev_states = vec![];
         let mut cur_tok = String::new();
 
-        let state = self
+        let fsm_state = self
             .as_ref()
             .trim()
             .chars()
-            .fold(LexerState::Start, |state, ch| {
-                tokenize_char(state, ch, &mut cur_tok, &mut toks)
+            .fold(LexerState::Start, |fsm, ch| {
+                fsm.tokenize_char(ch, &mut cur_tok, &mut toks, &mut prev_states)
             });
 
         if !cur_tok.is_empty() {
-            match state {
+            match fsm_state {
                 LexerState::InCmdArg => toks.push(Token::CmdArg(cur_tok)),
-                LexerState::InQuote(_) => toks.push(Token::Quote(cur_tok)),
-                LexerState::InVariable => toks.push(Token::Variable(cur_tok)),
+                // LexerState::InQuote(_) => toks.push(Token::Quote(cur_tok)),
+                LexerState::InVariable => toks.push(Token::Identifier(cur_tok)),
                 LexerState::InWildcard => toks.push(Token::Wildcard(cur_tok)),
                 LexerState::InOperator(_) => toks.push(Token::Operator(cur_tok)),
                 LexerState::InComment => toks.push(Token::Comment(cur_tok)),
@@ -218,14 +254,21 @@ mod test {
         // String with no spaces inside
         assert_eq!(
             r#"grep ":Zone.Identifier""#.tokenize(),
-            vec![CmdArg("grep".into()), Quote(r#"":Zone.Identifier""#.into())]
+            vec![
+                CmdArg("grep".into()),
+                QuoteBegin('\"'),
+                QuoteContents(":Zone.Identifier".into()),
+                QuoteEnd('\"')
+            ]
         );
 
         assert_eq!(
             r#"echo "My name is Cole McAnelly""#.tokenize(),
             vec![
                 CmdArg("echo".into()),
-                Quote(r#""My name is Cole McAnelly""#.into())
+                QuoteBegin('\"'),
+                QuoteContents("My name is Cole McAnelly".into()),
+                QuoteEnd('\"')
             ]
         );
 
@@ -236,7 +279,9 @@ mod test {
                 CmdArg("alias".into()),
                 CmdArg("colors".into()),
                 Operator("=".into()),
-                Quote("'~/bin/ansi_colors'".into())
+                QuoteBegin('\''),
+                QuoteContents("~/bin/ansi_colors".into()),
+                QuoteEnd('\'')
             ]
         );
 
@@ -246,7 +291,9 @@ mod test {
             vec![
                 CmdArg("MY_VAR".into()),
                 Operator("=".into()),
-                Quote(r#""this is the value of my variable""#.into())
+                QuoteBegin('\"'),
+                QuoteContents("this is the value of my variable".into()),
+                QuoteEnd('\"')
             ]
         );
     }
@@ -295,23 +342,6 @@ mod test {
     }
 
     #[test]
-    fn quotes_pipes_and_variables() {
-        assert_eq!(
-            "ls -l 'file name' | grep test $VAR # This is a comment".tokenize(),
-            vec![
-                CmdArg("ls".into()),
-                CmdArg("-l".into()),
-                Quote("'file name'".into()),
-                Operator("|".into()),
-                CmdArg("grep".into()),
-                CmdArg("test".into()),
-                Variable("$VAR".into()),
-                Comment("# This is a comment".into())
-            ]
-        )
-    }
-
-    #[test]
     fn io_redirections() {
         assert_eq!(
             r#"cat << EOF > file | wc -c | tr -d " " > file2"#.tokenize(),
@@ -327,7 +357,9 @@ mod test {
                 Operator("|".into()),
                 CmdArg("tr".into()),
                 CmdArg("-d".into()),
-                Quote(r#"" ""#.into()),
+                QuoteBegin('\"'),
+                QuoteContents(" ".into()),
+                QuoteEnd('\"'),
                 Operator(">".into()),
                 CmdArg("file2".into())
             ]
@@ -337,7 +369,9 @@ mod test {
             r#"echo "This is Cole McAnelly's file, and I am writing my name inside of it!!" >> my_file"#.tokenize(),
             vec![
                 CmdArg("echo".into()),
-                Quote(r#""This is Cole McAnelly's file, and I am writing my name inside of it!!""#.into()),
+                QuoteBegin('\"'),
+                QuoteContents("This is Cole McAnelly's file, and I am writing my name inside of it!!".into()),
+                QuoteEnd('\"'),
                 Operator(">>".into()),
                 CmdArg("my_file".into())
             ]
@@ -345,21 +379,80 @@ mod test {
     }
 
     #[test]
+    fn variables() {
+        assert_eq!(
+            "echo $VAR".tokenize(),
+            vec![CmdArg("echo".into()), DollarSign, Identifier("VAR".into())]
+        );
+        assert_eq!(
+            r#"echo "this is $VAR right here""#.tokenize(),
+            vec![
+                CmdArg("echo".into()),
+                QuoteBegin('\"'),
+                QuoteContents("this is ".into()),
+                DollarSign,
+                Identifier("VAR".into()),
+                QuoteContents(" right here".into()),
+                QuoteEnd('\"')
+            ]
+        );
+    }
+    #[test]
     fn parenthesis() {
         // Pipes with spaces in between
-        todo!("SUBPROCESS TOKENIZING");
-        // assert_eq!(
-        //     "echo $(ls -a)".tokenize(),
-        //     vec!["echo", "$", "(", "ls", "-a", ")"]
-        // );
+        // todo!("SUBPROCESS TOKENIZING");
+        assert_eq!(
+            "echo $(ls -a)".tokenize(),
+            vec![
+                CmdArg("echo".into()),
+                DollarSign,
+                GroupOpen,
+                CmdArg("ls".into()),
+                CmdArg("-a".into()),
+                GroupClose
+            ]
+        );
+        assert_eq!(
+            r#"echo -e "Here are the contents of the directory: [\n$(ls -a)\n]""#.tokenize(),
+            vec![
+                CmdArg("echo".into()),
+                CmdArg("-e".into()),
+                QuoteBegin('\"'),
+                QuoteContents(r"Here are the contents of the directory: [\n".into()),
+                DollarSign,
+                GroupOpen,
+                CmdArg("ls".into()),
+                CmdArg("-a".into()),
+                GroupClose,
+                QuoteContents(r"\n]".into()),
+                QuoteEnd('\"'),
+            ]
+        );
     }
 
     #[test]
-    fn multiple() {
+    fn complex() {
         // assert_eq!(
         //     r#"echo "$(ls -a)""#.tokenize(),
         //     vec!["echo", "\"", "$", "(", "ls", "-a", ")", "\""]
         // );
+        assert_eq!(
+            "ls -l 'file name' | grep test $VAR # This is a comment".tokenize(),
+            vec![
+                CmdArg("ls".into()),
+                CmdArg("-l".into()),
+                QuoteBegin('\''),
+                QuoteContents("file name".into()),
+                QuoteEnd('\''),
+                Operator("|".into()),
+                CmdArg("grep".into()),
+                CmdArg("test".into()),
+                DollarSign,
+                Identifier("VAR".into()),
+                Comment("# This is a comment".into())
+            ]
+        );
+
         assert_eq!(
             r#"find . -type f | grep ":Zone.Identifier" | xargs rm"#.tokenize(),
             vec![
@@ -369,7 +462,9 @@ mod test {
                 CmdArg("f".into()),
                 Operator("|".into()),
                 CmdArg("grep".into()),
-                Quote(r#"":Zone.Identifier""#.into()),
+                QuoteBegin('\"'),
+                QuoteContents(":Zone.Identifier".into()),
+                QuoteEnd('\"'),
                 Operator("|".into()),
                 CmdArg("xargs".into()),
                 CmdArg("rm".into())
