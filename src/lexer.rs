@@ -1,29 +1,42 @@
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ControlFlow {
-    IF,
-    THEN,
-    ELSE,
-    ENDIF,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    CmdArg(String),
-    Operator(String),
-    ControlOperator(ControlFlow),
+    Literal(String),
+    Symbol(String),
+    ControlOperator(String),
     Identifier(String),
-    DollarSign,
-    GroupOpen,
-    GroupClose,
     Wildcard(String),
-    QuoteBegin(char),
-    QuoteContents(String),
-    QuoteEnd(char),
+    Str(String),
     Comment(String),
 }
 
+impl Token {
+    pub fn inner(&self) -> &String {
+        match self {
+            Token::Literal(s) => s,
+            Token::Symbol(s) => s,
+            Token::ControlOperator(s) => s,
+            Token::Identifier(s) => s,
+            Token::Wildcard(s) => s,
+            Token::Str(s) => s,
+            Token::Comment(s) => s,
+        }
+    }
+
+    pub fn inner_mut(&mut self) -> &mut String {
+        match self {
+            Token::Literal(s) => s,
+            Token::Symbol(s) => s,
+            Token::ControlOperator(s) => s,
+            Token::Identifier(s) => s,
+            Token::Wildcard(s) => s,
+            Token::Str(s) => s,
+            Token::Comment(s) => s,
+        }
+    }
+}
+
 mod state_machine {
-    use super::{ControlFlow, Token};
+    use super::Token;
     use std::mem;
 
     const VALID_PATH_CHARS: &[char] = &['_', '~', '/', '.'];
@@ -33,9 +46,9 @@ mod state_machine {
     pub enum LexerState {
         #[default]
         Start,
-        InCmdArg,
+        InLiteral,
         InQuote(char),
-        InVariable,
+        InSubstitution,
         InWildcard,
         InOperator(char),
         InComment,
@@ -52,7 +65,7 @@ mod state_machine {
             match (self, ch) {
                 (LexerState::Start, c) if c.is_whitespace() => LexerState::Start,
                 (LexerState::Start, '\'' | '\"') => {
-                    toks.push(Token::QuoteBegin(ch));
+                    toks.push(Token::Symbol(ch.into()));
                     LexerState::InQuote(ch)
                 }
                 (LexerState::Start, '>' | '<') => {
@@ -60,7 +73,7 @@ mod state_machine {
                     LexerState::InOperator(ch)
                 }
                 (LexerState::Start, '|' | '=' | ';') => {
-                    toks.push(Token::Operator(ch.into()));
+                    toks.push(Token::Symbol(ch.into()));
                     LexerState::Start
                 }
                 (LexerState::Start, '#') => {
@@ -68,41 +81,37 @@ mod state_machine {
                     LexerState::InComment
                 }
                 (LexerState::Start, '$') => {
-                    toks.push(Token::DollarSign);
-                    LexerState::InVariable
+                    toks.push(Token::Symbol('$'.into()));
+                    LexerState::InSubstitution
                 }
-                (LexerState::Start | LexerState::InVariable | LexerState::InOperator(_), '(') => {
-                    toks.push(Token::GroupOpen);
+                (LexerState::Start | LexerState::InSubstitution | LexerState::InOperator(_), '(') => {
+                    toks.push(Token::Symbol('('.into()));
                     LexerState::Start
                 }
-                (LexerState::Start | LexerState::InVariable | LexerState::InCmdArg, ')') => {
-                    toks.push(Token::CmdArg(mem::take(cur_tok)));
-                    toks.push(Token::GroupClose);
-                    state_stack.pop().or(Some(LexerState::Start)).unwrap()
+                (LexerState::Start | LexerState::InSubstitution | LexerState::InLiteral, ')') => {
+                    toks.push(Token::Literal(mem::take(cur_tok)));
+                    toks.push(Token::Symbol(')'.into()));
+                    state_stack.pop().unwrap_or_default()
                 }
                 (LexerState::Start, _) => {
                     cur_tok.push(ch);
-                    LexerState::InCmdArg
+                    LexerState::InLiteral
                 }
-                (LexerState::InCmdArg, c)
+                (LexerState::InLiteral, c)
                     if c.is_alphanumeric() || VALID_PATH_CHARS.contains(&c) || c == '-' =>
                 {
                     cur_tok.push(c);
-                    LexerState::InCmdArg
+                    LexerState::InLiteral
                 }
-                (LexerState::InCmdArg, '*') => {
+                (LexerState::InLiteral, '*') => {
                     cur_tok.push(ch);
                     LexerState::InWildcard
                 }
-                (LexerState::InCmdArg, _) => {
+                (LexerState::InLiteral, _) => {
                     toks.push(match cur_tok.as_str() {
-                        "if" => Token::ControlOperator(ControlFlow::IF),
-                        "then" => Token::ControlOperator(ControlFlow::THEN),
-                        "else" => Token::ControlOperator(ControlFlow::ELSE),
-                        "fi" => Token::ControlOperator(ControlFlow::ENDIF),
-                        _ => Token::CmdArg(mem::take(cur_tok)),
+                        "if" | "then" | "else" | "fi" => Token::ControlOperator(mem::take(cur_tok)),
+                        _ => Token::Literal(mem::take(cur_tok)),
                     });
-                    cur_tok.clear();
                     LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
                 }
                 (LexerState::InWildcard, c)
@@ -117,40 +126,39 @@ mod state_machine {
                 }
                 (LexerState::InOperator(io_dir), c) if c == io_dir => {
                     cur_tok.push(c);
-                    toks.push(Token::Operator(mem::take(cur_tok)));
+                    toks.push(Token::Symbol(mem::take(cur_tok)));
                     LexerState::Start
                 }
                 (LexerState::InOperator(_), _) => {
-                    toks.push(Token::Operator(mem::take(cur_tok)));
+                    toks.push(Token::Symbol(mem::take(cur_tok)));
                     LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
                 }
-                (LexerState::InVariable, c)
+                (LexerState::InSubstitution, c)
                     if c.is_alphanumeric() || VARIABLE_CHARS.contains(&c) =>
                 {
                     cur_tok.push(c);
-                    LexerState::InVariable
+                    LexerState::InSubstitution
                 }
-                (LexerState::InVariable, _) => {
+                (LexerState::InSubstitution, _) => {
                     toks.push(Token::Identifier(mem::take(cur_tok)));
                     state_stack
                         .pop()
-                        .or(Some(LexerState::Start))
-                        .unwrap()
+                        .unwrap_or_default()
                         .tokenize_char(ch, cur_tok, toks, state_stack)
                 }
                 (LexerState::InQuote(q), '$') => {
-                    toks.push(Token::QuoteContents(mem::take(cur_tok)));
-                    toks.push(Token::DollarSign);
+                    toks.push(Token::Str(mem::take(cur_tok)));
+                    toks.push(Token::Symbol('$'.into()));
                     state_stack.push(LexerState::InQuote(q));
-                    LexerState::InVariable
+                    LexerState::InSubstitution
                 }
                 (LexerState::InQuote(q), c) if c != q => {
                     cur_tok.push(c);
                     LexerState::InQuote(q)
                 }
                 (LexerState::InQuote(_), _) => {
-                    toks.push(Token::QuoteContents(mem::take(cur_tok)));
-                    toks.push(Token::QuoteEnd(ch));
+                    toks.push(Token::Str(mem::take(cur_tok)));
+                    toks.push(Token::Symbol(ch.into()));
                     LexerState::Start
                 }
                 (LexerState::InComment, '\n') => {
@@ -191,11 +199,11 @@ where
 
         if !cur_tok.is_empty() {
             match fsm_state {
-                LexerState::InCmdArg => toks.push(Token::CmdArg(cur_tok)),
-                // LexerState::InQuote(_) => toks.push(Token::Quote(cur_tok)),
-                LexerState::InVariable => toks.push(Token::Identifier(cur_tok)),
+                LexerState::InLiteral => toks.push(Token::Literal(cur_tok)),
+                // LexerState::InQuote(_) => toks.push(Token::Str(cur_tok)),
+                LexerState::InSubstitution => toks.push(Token::Identifier(cur_tok)),
                 LexerState::InWildcard => toks.push(Token::Wildcard(cur_tok)),
-                LexerState::InOperator(_) => toks.push(Token::Operator(cur_tok)),
+                LexerState::InOperator(_) => toks.push(Token::Symbol(cur_tok)),
                 LexerState::InComment => toks.push(Token::Comment(cur_tok)),
                 _ => (),
             }
@@ -215,24 +223,24 @@ mod test {
         // Programs without arguments
         assert_eq!(
             "~/bin/ansi_colors".tokenize(),
-            vec![CmdArg("~/bin/ansi_colors".into())]
+            vec![Literal("~/bin/ansi_colors".into())]
         );
         // Programs with arguments
         assert_eq!(
             "ls -F --group-directories-first".tokenize(),
             vec![
-                CmdArg("ls".into()),
-                CmdArg("-F".into()),
-                CmdArg("--group-directories-first".into())
+                Literal("ls".into()),
+                Literal("-F".into()),
+                Literal("--group-directories-first".into())
             ]
         );
         assert_eq!(
             "xclip -selection c -o".tokenize(),
             vec![
-                CmdArg("xclip".into()),
-                CmdArg("-selection".into()),
-                CmdArg("c".into()),
-                CmdArg("-o".into())
+                Literal("xclip".into()),
+                Literal("-selection".into()),
+                Literal("c".into()),
+                Literal("-o".into())
             ]
         );
     }
@@ -241,11 +249,11 @@ mod test {
     fn tokenize_trait() {
         assert_eq!(
             "~/bin/ansi_colors".tokenize(),
-            vec![CmdArg("~/bin/ansi_colors".into())]
+            vec![Literal("~/bin/ansi_colors".into())]
         );
         assert_eq!(
             String::from("~/bin/ansi_colors").tokenize(),
-            vec![CmdArg("~/bin/ansi_colors".into())]
+            vec![Literal("~/bin/ansi_colors".into())]
         );
     }
 
@@ -255,20 +263,20 @@ mod test {
         assert_eq!(
             r#"grep ":Zone.Identifier""#.tokenize(),
             vec![
-                CmdArg("grep".into()),
-                QuoteBegin('\"'),
-                QuoteContents(":Zone.Identifier".into()),
-                QuoteEnd('\"')
+                Literal("grep".into()),
+                Symbol('\"'.into()),
+                Str(":Zone.Identifier".into()),
+                Symbol('\"'.into())
             ]
         );
 
         assert_eq!(
             r#"echo "My name is Cole McAnelly""#.tokenize(),
             vec![
-                CmdArg("echo".into()),
-                QuoteBegin('\"'),
-                QuoteContents("My name is Cole McAnelly".into()),
-                QuoteEnd('\"')
+                Literal("echo".into()),
+                Symbol('\"'.into()),
+                Str("My name is Cole McAnelly".into()),
+                Symbol('\"'.into())
             ]
         );
 
@@ -276,12 +284,12 @@ mod test {
         assert_eq!(
             "alias colors='~/bin/ansi_colors'".tokenize(),
             vec![
-                CmdArg("alias".into()),
-                CmdArg("colors".into()),
-                Operator("=".into()),
-                QuoteBegin('\''),
-                QuoteContents("~/bin/ansi_colors".into()),
-                QuoteEnd('\'')
+                Literal("alias".into()),
+                Literal("colors".into()),
+                Symbol("=".into()),
+                Symbol('\''.into()),
+                Str("~/bin/ansi_colors".into()),
+                Symbol('\''.into())
             ]
         );
 
@@ -289,11 +297,11 @@ mod test {
         assert_eq!(
             r#"MY_VAR="this is the value of my variable""#.tokenize(),
             vec![
-                CmdArg("MY_VAR".into()),
-                Operator("=".into()),
-                QuoteBegin('\"'),
-                QuoteContents("this is the value of my variable".into()),
-                QuoteEnd('\"')
+                Literal("MY_VAR".into()),
+                Symbol("=".into()),
+                Symbol('\"'.into()),
+                Str("this is the value of my variable".into()),
+                Symbol('\"'.into())
             ]
         );
     }
@@ -304,25 +312,25 @@ mod test {
         assert_eq!(
             r#"history | grep git | xargs rm"#.tokenize(),
             vec![
-                CmdArg("history".into()),
-                Operator("|".into()),
-                CmdArg("grep".into()),
-                CmdArg("git".into()),
-                Operator("|".into()),
-                CmdArg("xargs".into()),
-                CmdArg("rm".into())
+                Literal("history".into()),
+                Symbol("|".into()),
+                Literal("grep".into()),
+                Literal("git".into()),
+                Symbol("|".into()),
+                Literal("xargs".into()),
+                Literal("rm".into())
             ]
         );
         assert_eq!(
             "ls ./src/*.rs | xargs basename -s .rs".tokenize(),
             vec![
-                CmdArg("ls".into()),
+                Literal("ls".into()),
                 Wildcard("./src/*.rs".into()),
-                Operator("|".into()),
-                CmdArg("xargs".into()),
-                CmdArg("basename".into()),
-                CmdArg("-s".into()),
-                CmdArg(".rs".into())
+                Symbol("|".into()),
+                Literal("xargs".into()),
+                Literal("basename".into()),
+                Literal("-s".into()),
+                Literal(".rs".into())
             ]
         );
 
@@ -330,13 +338,13 @@ mod test {
         assert_eq!(
             r#"history|grep git|xargs rm"#.tokenize(),
             vec![
-                CmdArg("history".into()),
-                Operator("|".into()),
-                CmdArg("grep".into()),
-                CmdArg("git".into()),
-                Operator("|".into()),
-                CmdArg("xargs".into()),
-                CmdArg("rm".into())
+                Literal("history".into()),
+                Symbol("|".into()),
+                Literal("grep".into()),
+                Literal("git".into()),
+                Symbol("|".into()),
+                Literal("xargs".into()),
+                Literal("rm".into())
             ]
         );
     }
@@ -346,34 +354,34 @@ mod test {
         assert_eq!(
             r#"cat << EOF > file | wc -c | tr -d " " > file2"#.tokenize(),
             vec![
-                CmdArg("cat".into()),
-                Operator("<<".into()),
-                CmdArg("EOF".into()),
-                Operator(">".into()),
-                CmdArg("file".into()),
-                Operator("|".into()),
-                CmdArg("wc".into()),
-                CmdArg("-c".into()),
-                Operator("|".into()),
-                CmdArg("tr".into()),
-                CmdArg("-d".into()),
-                QuoteBegin('\"'),
-                QuoteContents(" ".into()),
-                QuoteEnd('\"'),
-                Operator(">".into()),
-                CmdArg("file2".into())
+                Literal("cat".into()),
+                Symbol("<<".into()),
+                Literal("EOF".into()),
+                Symbol(">".into()),
+                Literal("file".into()),
+                Symbol("|".into()),
+                Literal("wc".into()),
+                Literal("-c".into()),
+                Symbol("|".into()),
+                Literal("tr".into()),
+                Literal("-d".into()),
+                Symbol('\"'.into()),
+                Str(" ".into()),
+                Symbol('\"'.into()),
+                Symbol(">".into()),
+                Literal("file2".into())
             ]
         );
 
         assert_eq!(
             r#"echo "This is Cole McAnelly's file, and I am writing my name inside of it!!" >> my_file"#.tokenize(),
             vec![
-                CmdArg("echo".into()),
-                QuoteBegin('\"'),
-                QuoteContents("This is Cole McAnelly's file, and I am writing my name inside of it!!".into()),
-                QuoteEnd('\"'),
-                Operator(">>".into()),
-                CmdArg("my_file".into())
+                Literal("echo".into()),
+                Symbol('\"'.into()),
+                Str("This is Cole McAnelly's file, and I am writing my name inside of it!!".into()),
+                Symbol('\"'.into()),
+                Symbol(">>".into()),
+                Literal("my_file".into())
             ]
         )
     }
@@ -382,18 +390,18 @@ mod test {
     fn variables() {
         assert_eq!(
             "echo $VAR".tokenize(),
-            vec![CmdArg("echo".into()), DollarSign, Identifier("VAR".into())]
+            vec![Literal("echo".into()), Symbol('$'.into()), Identifier("VAR".into())]
         );
         assert_eq!(
             r#"echo "this is $VAR right here""#.tokenize(),
             vec![
-                CmdArg("echo".into()),
-                QuoteBegin('\"'),
-                QuoteContents("this is ".into()),
-                DollarSign,
+                Literal("echo".into()),
+                Symbol('\"'.into()),
+                Str("this is ".into()),
+                Symbol('$'.into()),
                 Identifier("VAR".into()),
-                QuoteContents(" right here".into()),
-                QuoteEnd('\"')
+                Str(" right here".into()),
+                Symbol('\"'.into())
             ]
         );
     }
@@ -404,43 +412,43 @@ mod test {
         assert_eq!(
             "echo $(ls -a)".tokenize(),
             vec![
-                CmdArg("echo".into()),
-                DollarSign,
-                GroupOpen,
-                CmdArg("ls".into()),
-                CmdArg("-a".into()),
-                GroupClose
+                Literal("echo".into()),
+                Symbol('$'.into()),
+                Symbol('('.into()),
+                Literal("ls".into()),
+                Literal("-a".into()),
+                Symbol(')'.into())
             ]
         );
         assert_eq!(
             r#"echo -e "Here are the contents of the directory: [\n$(ls -a)\n]""#.tokenize(),
             vec![
-                CmdArg("echo".into()),
-                CmdArg("-e".into()),
-                QuoteBegin('\"'),
-                QuoteContents(r"Here are the contents of the directory: [\n".into()),
-                DollarSign,
-                GroupOpen,
-                CmdArg("ls".into()),
-                CmdArg("-a".into()),
-                GroupClose,
-                QuoteContents(r"\n]".into()),
-                QuoteEnd('\"'),
+                Literal("echo".into()),
+                Literal("-e".into()),
+                Symbol('\"'.into()),
+                Str(r"Here are the contents of the directory: [\n".into()),
+                Symbol('$'.into()),
+                Symbol('('.into()),
+                Literal("ls".into()),
+                Literal("-a".into()),
+                Symbol(')'.into()),
+                Str(r"\n]".into()),
+                Symbol('\"'.into()),
             ]
         );
         assert_eq!(
             r#"echo "$(ls -a)""#.tokenize(),
             vec![
-                CmdArg("echo".into()),
-                QuoteBegin('\"'),
-                QuoteContents("".into()),
-                DollarSign,
-                GroupOpen,
-                CmdArg("ls".into()),
-                CmdArg("-a".into()),
-                GroupClose,
-                QuoteContents("".into()),
-                QuoteEnd('\"'),
+                Literal("echo".into()),
+                Symbol('\"'.into()),
+                Str("".into()),
+                Symbol('$'.into()),
+                Symbol('('.into()),
+                Literal("ls".into()),
+                Literal("-a".into()),
+                Symbol(')'.into()),
+                Str("".into()),
+                Symbol('\"'.into()),
             ]
         );
     }
@@ -450,15 +458,15 @@ mod test {
         assert_eq!(
             "ls -l 'file name' | grep test $VAR # This is a comment".tokenize(),
             vec![
-                CmdArg("ls".into()),
-                CmdArg("-l".into()),
-                QuoteBegin('\''),
-                QuoteContents("file name".into()),
-                QuoteEnd('\''),
-                Operator("|".into()),
-                CmdArg("grep".into()),
-                CmdArg("test".into()),
-                DollarSign,
+                Literal("ls".into()),
+                Literal("-l".into()),
+                Symbol('\''.into()),
+                Str("file name".into()),
+                Symbol('\''.into()),
+                Symbol("|".into()),
+                Literal("grep".into()),
+                Literal("test".into()),
+                Symbol('$'.into()),
                 Identifier("VAR".into()),
                 Comment("# This is a comment".into())
             ]
@@ -467,18 +475,18 @@ mod test {
         assert_eq!(
             r#"find . -type f | grep ":Zone.Identifier" | xargs rm"#.tokenize(),
             vec![
-                CmdArg("find".into()),
-                CmdArg(".".into()),
-                CmdArg("-type".into()),
-                CmdArg("f".into()),
-                Operator("|".into()),
-                CmdArg("grep".into()),
-                QuoteBegin('\"'),
-                QuoteContents(":Zone.Identifier".into()),
-                QuoteEnd('\"'),
-                Operator("|".into()),
-                CmdArg("xargs".into()),
-                CmdArg("rm".into())
+                Literal("find".into()),
+                Literal(".".into()),
+                Literal("-type".into()),
+                Literal("f".into()),
+                Symbol("|".into()),
+                Literal("grep".into()),
+                Symbol('\"'.into()),
+                Str(":Zone.Identifier".into()),
+                Symbol('\"'.into()),
+                Symbol("|".into()),
+                Literal("xargs".into()),
+                Literal("rm".into())
             ]
         );
         // assert_eq!(
