@@ -1,14 +1,14 @@
 use std::error::Error;
 
-mod lexer;
-mod parser;
-use lexer::Tokenize;
-use parser::Parse;
+
 // use std::io::{stdin, stdout, Write};
 
 // const PROMPT: &'static str = "rush> ";
 
-
+use lang::{
+    lexer::Tokenize,
+    parser::Parse
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // let mut line = String::new();

@@ -25,114 +25,109 @@
  * <ident> == Identifier
  * <literal> == Literal
 */
+use crate::lexer::Token;
+
 use std::iter::Peekable;
 use std::mem;
 
 use std::slice::IterMut;
 
-use crate::lexer::Token;
+#[derive(Clone, PartialEq)]
+pub enum Tree {
+    Pipe(Box<Tree>, Box<Tree>),
+    Command { name: Box<Tree>, args: Vec<Tree> },
 
-mod parse {
-    use super::*;
+    Quote(char, Vec<Tree>),
+    Subshell(Box<Tree>),
 
-    #[derive(Clone, PartialEq)]
-    pub enum Tree {
-        Pipe(Box<Tree>, Box<Tree>),
-        Command { name: Box<Tree>, args: Vec<Tree> },
+    Literal(String),
+    Identifier(String),
+    String(String),
+}
 
-        Quote(char, Vec<Tree>),
-        Subshell(Box<Tree>),
+trait TreeBuilder {
+    fn parse_pipe(&mut self) -> Tree;
+    fn parse_command(&mut self) -> Tree;
+    fn parse_substitute(&mut self) -> Tree;
+    fn parse_subshell(&mut self) -> Tree;
+    fn parse_quote(&mut self, q: char) -> Tree;
+}
 
-        Literal(String),
-        Identifier(String),
-        String(String),
+impl TreeBuilder for Peekable<IterMut<'_, Token>> {
+    fn parse_pipe(&mut self) -> Tree {
+        let mut tree = self.parse_command();
+
+        while let Some(_) = self.next_if(|t| t.inner() == "|") {
+            tree = Tree::Pipe(Box::new(tree), Box::new(self.parse_command()));
+        }
+        tree
     }
 
-    trait TreeBuilder {
-        fn parse_pipe(&mut self) -> Tree;
-        fn parse_command(&mut self) -> Tree;
-        fn parse_args(&mut self) -> Vec<Tree>;
-        fn parse_substitute(&mut self) -> Tree;
-        fn parse_subshell(&mut self) -> Tree;
-        fn parse_quote(&mut self, q: char) -> Tree;
+    fn parse_command(&mut self) -> Tree {
+        let token = self.next().expect("INVALID INPUT");
+
+        Tree::Command {
+            name: match token {
+                Token::Literal(lit) => Box::new(Tree::Literal(mem::take(lit))),
+                Token::Symbol(sym) if sym.as_str() == "$" => Box::new(self.parse_substitute()),
+                _ => todo!(),
+            },
+            args: {
+                let mut args = vec![];
+
+                while let Some(token) = self.peek() {
+                    match token {
+                        Token::Literal(_) => {
+                            args.push(Tree::Literal(mem::take(self.next().unwrap().inner_mut())))
+                        }
+                        Token::Symbol(sym) if sym.as_str() == "$" => {
+                            self.next();
+                            args.push(self.parse_substitute());
+                        }
+                        Token::Symbol(sym) if sym.as_str() == "\"" => {
+                            self.next();
+                            args.push(self.parse_quote('\"'));
+                        }
+                        Token::Symbol(sym) if sym.as_str() == "\'" => {
+                            self.next();
+                            args.push(self.parse_quote('\''))
+                        }
+                        _ => break,
+                        // Token::Wildcard(_) => unimplemented!(),
+                        // Token::ControlOperator(_) => unimplemented!(),
+                    }
+                }
+                args
+            },
+        }
     }
 
-    impl TreeBuilder for Peekable<IterMut<'_, Token>> {
-        fn parse_pipe(&mut self) -> Tree {
-            let mut tree = self.parse_command();
+    fn parse_substitute(&mut self) -> Tree {
+        let token = self.next().expect("INVALID INPUT");
 
-            while let Some(_) = self.next_if(|t| t.inner() == "|") {
-                tree = Tree::Pipe(Box::new(tree), Box::new(self.parse_command()));
+        match token {
+            Token::Identifier(id) => Tree::Identifier(mem::take(id)),
+            Token::Symbol(sym) if sym.as_str() == "(" => {
+                let subs = self.parse_subshell();
+
+                self.peek()
+                    .and_then(|t| (t.inner() == ")").then_some(()))
+                    .expect("Unbalanced parenthesis!"); // eventually ok_or(...)?
+                self.next();
+                subs
             }
-            tree
+            _ => todo!(), // Invalid $ character!
         }
+    }
 
-        fn parse_command(&mut self) -> Tree {
-            let token = self.next().expect("INVALID INPUT");
+    fn parse_subshell(&mut self) -> Tree {
+        Tree::Subshell(Box::new(self.parse_pipe()))
+    }
 
-            Tree::Command {
-                name: match token {
-                    Token::Literal(lit) => Box::new(Tree::Literal(mem::take(lit))),
-                    Token::Symbol(sym) if sym.as_str() == "$" => Box::new(self.parse_substitute()),
-                    _ => todo!(),
-                },
-                args: self.parse_args(),
-            }
-        }
-
-        fn parse_args(&mut self) -> Vec<Tree> {
-            let mut args = vec![];
-
-            while let Some(token) = self.peek() {
-                match token {
-                    Token::Literal(_) => {
-                        args.push(Tree::Literal(mem::take(self.next().unwrap().inner_mut())))
-                    }
-                    Token::Symbol(sym) if sym.as_str() == "$" => {
-                        self.next();
-                        args.push(self.parse_substitute());
-                    }
-                    Token::Symbol(sym) if sym.as_str() == "\"" => {
-                        self.next();
-                        args.push(self.parse_quote('\"'));
-                    }
-                    Token::Symbol(sym) if sym.as_str() == "\'" => {
-                        self.next();
-                        args.push(self.parse_quote('\''))
-                    }
-                    _ => return args,
-                    // Token::Wildcard(_) => unimplemented!(),
-                    // Token::ControlOperator(_) => unimplemented!(),
-                }
-            }
-            args
-        }
-
-        fn parse_substitute(&mut self) -> Tree {
-            let token = self.next().expect("INVALID INPUT");
-
-            match token {
-                Token::Identifier(id) => Tree::Identifier(mem::take(id)),
-                Token::Symbol(sym) if sym.as_str() == "(" => {
-                    let subs = self.parse_subshell();
-
-                    self.peek()
-                        .and_then(|t| (t.inner() == ")").then_some(()))
-                        .expect("Unbalanced parenthesis!"); // eventually ok_or(...)?
-                    self.next();
-                    subs
-                }
-                _ => todo!(), // Invalid $ character!
-            }
-        }
-
-        fn parse_subshell(&mut self) -> Tree {
-            Tree::Subshell(Box::new(self.parse_pipe()))
-        }
-
-        fn parse_quote(&mut self, q: char) -> Tree {
-            let mut quoted = vec![];
-
+    fn parse_quote(&mut self, q: char) -> Tree {
+        let mut quoted = vec![];
+        
+        loop {
             let Some(Token::Str(string)) = self.next() else {
                 panic!("Unbalanced quotation mark!")
             }; // mem::take(
@@ -160,29 +155,29 @@ mod parse {
             panic!("Parse error!")
         }
     }
+}
 
-    impl From<Vec<Token>> for Tree {
-        fn from(mut tokens: Vec<Token>) -> Self {
-            let mut token_it = tokens.iter_mut().peekable();
+impl From<Vec<Token>> for Tree {
+    fn from(mut tokens: Vec<Token>) -> Self {
+        let mut token_it = tokens.iter_mut().peekable();
 
-            token_it.parse_pipe()
-        }
+        token_it.parse_pipe()
     }
 }
 
 pub trait Parse {
-    fn parse(self) -> parse::Tree;
+    fn parse(self) -> Tree;
 }
 
 impl Parse for Vec<Token> {
-    fn parse(self) -> parse::Tree {
-        parse::Tree::from(self)
+    fn parse(self) -> Tree {
+        Tree::from(self)
     }
 }
 
-impl std::fmt::Debug for parse::Tree {
+impl std::fmt::Debug for Tree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use parse::Tree;
+        use Tree;
         fn vec_to_string(v: &Vec<Tree>, l_pad: String) -> String {
             let Some((last, rest)) = v.split_last() else {
                 return "".into();
@@ -222,7 +217,7 @@ impl std::fmt::Debug for parse::Tree {
     }
 }
 
-impl std::fmt::Display for parse::Tree {
+impl std::fmt::Display for Tree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Pipe(l, r) => write!(f, "{l} | {r}"),
