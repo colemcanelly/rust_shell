@@ -70,7 +70,7 @@ impl TreeBuilder for Peekable<IterMut<'_, Token>> {
             name: match token {
                 Token::Literal(lit) => Box::new(Tree::Literal(mem::take(lit))),
                 Token::Symbol(sym) if sym.as_str() == "$" => Box::new(self.parse_substitute()),
-                _ => todo!(),
+                _ => todo!("Implement error handling for invalid command tokens"),
             },
             args: {
                 let mut args = vec![];
@@ -116,7 +116,7 @@ impl TreeBuilder for Peekable<IterMut<'_, Token>> {
                 self.next();
                 subs
             }
-            _ => todo!(), // Invalid $ character!
+            _ => todo!("Implement error handling for invalid substitution token"), // Invalid $ character!
         }
     }
 
@@ -126,7 +126,7 @@ impl TreeBuilder for Peekable<IterMut<'_, Token>> {
 
     fn parse_quote(&mut self, q: char) -> Tree {
         let mut quoted = vec![];
-        
+
         loop {
             let Some(Token::Str(string)) = self.next() else {
                 panic!("Unbalanced quotation mark!")
@@ -150,7 +150,7 @@ impl TreeBuilder for Peekable<IterMut<'_, Token>> {
                     quoted.push(Tree::String(mem::take(string)));
                     quoted.push(self.parse_substitute());
                 }
-                _ => todo!(),
+                _ => todo!("Implement error handling for invalid quote contents"),
             };
             panic!("Parse error!")
         }
@@ -159,9 +159,10 @@ impl TreeBuilder for Peekable<IterMut<'_, Token>> {
 
 impl From<Vec<Token>> for Tree {
     fn from(mut tokens: Vec<Token>) -> Self {
-        let mut token_it = tokens.iter_mut().peekable();
-
-        token_it.parse_pipe()
+        tokens
+            .iter_mut()
+            .peekable()
+            .parse_pipe()
     }
 }
 
@@ -177,7 +178,6 @@ impl Parse for Vec<Token> {
 
 impl std::fmt::Debug for Tree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Tree;
         fn vec_to_string(v: &Vec<Tree>, l_pad: String) -> String {
             let Some((last, rest)) = v.split_last() else {
                 return "".into();
@@ -220,28 +220,52 @@ impl std::fmt::Debug for Tree {
 impl std::fmt::Display for Tree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Pipe(l, r) => write!(f, "{l} | {r}"),
-            Self::Command { name, args } => write!(
-                f,
-                "{} {}",
+            Self::Pipe(l, r) => write!(f, "Pipe(Box::new({l}), Box::new({r}))"),
+            Self::Command { name, args } => write!(f,
+                "Command {{ name: Box::new({}), args: vec![{}] }}",
                 name.as_ref(),
                 args.iter()
                     .map(|arg| arg.to_string())
                     .collect::<Vec<String>>()
-                    .join(" ")
+                    .join(", ")
             ),
-            Self::Subshell(_) => todo!(),
-            Self::Literal(lit) => write!(f, "{lit}"),
-            Self::Identifier(id) => write!(f, "${id}"),
-            Self::String(s) => write!(f, "{s}"),
-            Self::Quote(ch, v) => write!(
-                f,
-                "{ch}{}{ch}",
+            Self::Quote(ch, v) => write!(f,
+                "Quote({ch}, vec![{}])",
                 v.iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-                    .join("")
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>()
+                .join("")
             ),
+            Self::Subshell(s) => write!(f, "Subshell(Box::new({s}))"),
+            Self::Literal(lit) => write!(f, "Literal(\"{lit}\".into())"),
+            Self::Identifier(id) => write!(f, "Identifier(\"{id}\".into())"),
+            Self::String(s) => write!(f, "String(r#\"{s}\"#.into())"),
         }
     }
+    // fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    //     match self {
+    //         Self::Pipe(l, r) => write!(f, "{l} | {r}"),
+    //         Self::Command { name, args } => write!(
+    //             f,
+    //             "{} {}",
+    //             name.as_ref(),
+    //             args.iter()
+    //                 .map(|arg| arg.to_string())
+    //                 .collect::<Vec<String>>()
+    //                 .join(" ")
+    //         ),
+    //         Self::Subshell(_) => todo!(),
+    //         Self::Literal(lit) => write!(f, "{lit}"),
+    //         Self::Identifier(id) => write!(f, "${id}"),
+    //         Self::String(s) => write!(f, "{s}"),
+    //         Self::Quote(ch, v) => write!(
+    //             f,
+    //             "{ch}{}{ch}",
+    //             v.iter()
+    //                 .map(|s| s.to_string())
+    //                 .collect::<Vec<String>>()
+    //                 .join("")
+    //         ),
+    //     }
+    // }
 }

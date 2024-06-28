@@ -1,3 +1,5 @@
+use std::mem::take;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Literal(String),
@@ -35,145 +37,6 @@ impl Token {
     }
 }
 
-mod state_machine {
-    use super::Token;
-    use std::mem;
-
-    const VALID_PATH_CHARS: &[char] = &['_', '~', '/', '.'];
-    const VARIABLE_CHARS: &[char] = &['_', '{', '}'];
-
-    #[derive(Copy, Clone, Debug, Default, PartialEq)]
-    pub enum LexerState {
-        #[default]
-        Start,
-        InLiteral,
-        InQuote(char),
-        InSubstitution,
-        InWildcard,
-        InOperator(char),
-        InComment,
-    }
-
-    impl LexerState {
-        pub fn tokenize_char(
-            self,
-            ch: char,
-            cur_tok: &mut String,
-            toks: &mut Vec<Token>,
-            state_stack: &mut Vec<LexerState>,
-        ) -> LexerState {
-            match (self, ch) {
-                (LexerState::Start, c) if c.is_whitespace() => LexerState::Start,
-                (LexerState::Start, '\'' | '\"') => {
-                    toks.push(Token::Symbol(ch.into()));
-                    LexerState::InQuote(ch)
-                }
-                (LexerState::Start, '>' | '<') => {
-                    cur_tok.push(ch);
-                    LexerState::InOperator(ch)
-                }
-                (LexerState::Start, '|' | '=' | ';') => {
-                    toks.push(Token::Symbol(ch.into()));
-                    LexerState::Start
-                }
-                (LexerState::Start, '#') => {
-                    cur_tok.push(ch);
-                    LexerState::InComment
-                }
-                (LexerState::Start, '$') => {
-                    toks.push(Token::Symbol('$'.into()));
-                    LexerState::InSubstitution
-                }
-                (LexerState::Start | LexerState::InSubstitution | LexerState::InOperator(_), '(') => {
-                    toks.push(Token::Symbol('('.into()));
-                    LexerState::Start
-                }
-                (LexerState::Start | LexerState::InSubstitution | LexerState::InLiteral, ')') => {
-                    toks.push(Token::Literal(mem::take(cur_tok)));
-                    toks.push(Token::Symbol(')'.into()));
-                    state_stack.pop().unwrap_or_default()
-                }
-                (LexerState::Start, _) => {
-                    cur_tok.push(ch);
-                    LexerState::InLiteral
-                }
-                (LexerState::InLiteral, c)
-                    if c.is_alphanumeric() || VALID_PATH_CHARS.contains(&c) || c == '-' =>
-                {
-                    cur_tok.push(c);
-                    LexerState::InLiteral
-                }
-                (LexerState::InLiteral, '*') => {
-                    cur_tok.push(ch);
-                    LexerState::InWildcard
-                }
-                (LexerState::InLiteral, _) => {
-                    toks.push(match cur_tok.as_str() {
-                        "if" | "then" | "else" | "fi" => Token::ControlOperator(mem::take(cur_tok)),
-                        _ => Token::Literal(mem::take(cur_tok)),
-                    });
-                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
-                }
-                (LexerState::InWildcard, c)
-                    if c.is_alphanumeric() || VALID_PATH_CHARS.contains(&c) =>
-                {
-                    cur_tok.push(c);
-                    LexerState::InWildcard
-                }
-                (LexerState::InWildcard, _) => {
-                    toks.push(Token::Wildcard(mem::take(cur_tok)));
-                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
-                }
-                (LexerState::InOperator(io_dir), c) if c == io_dir => {
-                    cur_tok.push(c);
-                    toks.push(Token::Symbol(mem::take(cur_tok)));
-                    LexerState::Start
-                }
-                (LexerState::InOperator(_), _) => {
-                    toks.push(Token::Symbol(mem::take(cur_tok)));
-                    LexerState::Start.tokenize_char(ch, cur_tok, toks, state_stack)
-                }
-                (LexerState::InSubstitution, c)
-                    if c.is_alphanumeric() || VARIABLE_CHARS.contains(&c) =>
-                {
-                    cur_tok.push(c);
-                    LexerState::InSubstitution
-                }
-                (LexerState::InSubstitution, _) => {
-                    toks.push(Token::Identifier(mem::take(cur_tok)));
-                    state_stack
-                        .pop()
-                        .unwrap_or_default()
-                        .tokenize_char(ch, cur_tok, toks, state_stack)
-                }
-                (LexerState::InQuote(q), '$') => {
-                    toks.push(Token::Str(mem::take(cur_tok)));
-                    toks.push(Token::Symbol('$'.into()));
-                    state_stack.push(LexerState::InQuote(q));
-                    LexerState::InSubstitution
-                }
-                (LexerState::InQuote(q), c) if c != q => {
-                    cur_tok.push(c);
-                    LexerState::InQuote(q)
-                }
-                (LexerState::InQuote(_), _) => {
-                    toks.push(Token::Str(mem::take(cur_tok)));
-                    toks.push(Token::Symbol(ch.into()));
-                    LexerState::Start
-                }
-                (LexerState::InComment, '\n') => {
-                    toks.push(Token::Comment(mem::take(cur_tok)));
-                    LexerState::Start
-                }
-                (LexerState::InComment, c) => {
-                    cur_tok.push(c);
-                    LexerState::InComment
-                }
-            }
-        }
-    }
-}
-
 pub trait Tokenize {
     fn tokenize(self) -> Vec<Token>;
 }
@@ -183,32 +46,152 @@ where
     S: AsRef<str>,
 {
     fn tokenize(self) -> Vec<Token> {
-        use crate::lexer::state_machine::LexerState;
-
-        let mut toks = vec![];
-        let mut prev_states = vec![];
-        let mut cur_tok = String::new();
-
-        let fsm_state = self
+        let mut fsm = self
             .as_ref()
             .trim()
             .chars()
-            .fold(LexerState::Start, |fsm, ch| {
-                fsm.tokenize_char(ch, &mut cur_tok, &mut toks, &mut prev_states)
-            });
+            .fold(Lexer::default(), |fsm, ch| fsm.tokenize_char(ch));
 
-        if !cur_tok.is_empty() {
-            match fsm_state {
-                LexerState::InLiteral => toks.push(Token::Literal(cur_tok)),
-                // LexerState::InQuote(_) => toks.push(Token::Str(cur_tok)),
-                LexerState::InSubstitution => toks.push(Token::Identifier(cur_tok)),
-                LexerState::InWildcard => toks.push(Token::Wildcard(cur_tok)),
-                LexerState::InOperator(_) => toks.push(Token::Symbol(cur_tok)),
-                LexerState::InComment => toks.push(Token::Comment(cur_tok)),
+        if !fsm.current.is_empty() {
+            match fsm.state {
+                LexerState::InLiteral => fsm.tokens.push(Token::Literal(fsm.current)),
+                // LexerState::InQuote(_) => fsm.tokens.push(Token::Str(fsm.current)),
+                LexerState::InSubstitution => fsm.tokens.push(Token::Identifier(fsm.current)),
+                LexerState::InWildcard => fsm.tokens.push(Token::Wildcard(fsm.current)),
+                LexerState::InOperator(_) => fsm.tokens.push(Token::Symbol(fsm.current)),
+                LexerState::InComment => fsm.tokens.push(Token::Comment(fsm.current)),
                 _ => (),
             }
         }
 
-        toks
+        fsm.tokens
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+enum LexerState {
+    #[default]
+    Start,
+    InLiteral,
+    InQuote(char),
+    InSubstitution,
+    InWildcard,
+    InOperator(char),
+    InComment,
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct Lexer {
+    state: LexerState,
+    stack: Vec<LexerState>,
+    current: String,
+    tokens: Vec<Token>,
+}
+
+impl Lexer {
+    fn tokenize_char(mut self, ch: char) -> Self {
+        match (self.state, ch) {
+            (LexerState::Start, c) if c.is_whitespace() => (),
+            (LexerState::Start, '\'' | '\"') => {
+                self.tokens.push(Token::Symbol(ch.into()));
+                self.state = LexerState::InQuote(ch);
+            }
+            (LexerState::Start, '>' | '<') => {
+                self.current.push(ch);
+                self.state = LexerState::InOperator(ch);
+            }
+            (LexerState::Start, '|' | '=' | ';') => self.tokens.push(Token::Symbol(ch.into())),
+            (LexerState::Start, '#') => {
+                self.current.push(ch);
+                self.state = LexerState::InComment;
+            }
+            (LexerState::Start, '$') => {
+                self.tokens.push(Token::Symbol('$'.into()));
+                self.state = LexerState::InSubstitution;
+            }
+            (LexerState::Start | LexerState::InSubstitution | LexerState::InOperator(_), '(') => {
+                self.tokens.push(Token::Symbol('('.into()));
+                self.state = LexerState::Start;
+            }
+            (LexerState::Start | LexerState::InSubstitution | LexerState::InLiteral, ')') => {
+                self.tokens.push(Token::Literal(take(&mut self.current)));
+                self.tokens.push(Token::Symbol(')'.into()));
+                self.state = self.stack.pop().unwrap_or_default();
+            }
+            (LexerState::Start, _) => {
+                self.current.push(ch);
+                self.state = LexerState::InLiteral;
+            }
+            (LexerState::InLiteral, c) if c.is_path_char() => self.current.push(c),
+            (LexerState::InLiteral, '*') => {
+                self.current.push(ch);
+                self.state = LexerState::InWildcard;
+            }
+            (LexerState::InLiteral, _) => {
+                self.tokens.push(match self.current.as_str() {
+                    "if" | "then" | "else" | "fi" => {
+                        Token::ControlOperator(take(&mut self.current))
+                    }
+                    _ => Token::Literal(take(&mut self.current)),
+                });
+                self.state = LexerState::Start;
+                self = self.tokenize_char(ch);
+            }
+            (LexerState::InWildcard, c) if c.is_path_char() => self.current.push(c),
+            (LexerState::InWildcard, _) => {
+                self.tokens.push(Token::Wildcard(take(&mut self.current)));
+                self.state = LexerState::Start;
+                self = self.tokenize_char(ch);
+            }
+            (LexerState::InOperator(io_dir), c) if c == io_dir => {
+                self.current.push(c);
+                self.tokens.push(Token::Symbol(take(&mut self.current)));
+                self.state = LexerState::Start;
+            }
+            (LexerState::InOperator(_), _) => {
+                self.tokens.push(Token::Symbol(take(&mut self.current)));
+                self.state = LexerState::Start;
+                self = self.tokenize_char(ch);
+            }
+            (LexerState::InSubstitution, c) if c.is_variable_char() => self.current.push(c),
+            (LexerState::InSubstitution, _) => {
+                self.tokens.push(Token::Identifier(take(&mut self.current)));
+                self.state = self.stack.pop().unwrap_or_default();
+                self = self.tokenize_char(ch);
+            }
+            (LexerState::InQuote(_), '$') => {
+                self.tokens.push(Token::Str(take(&mut self.current)));
+                self.tokens.push(Token::Symbol('$'.into()));
+                self.stack.push(self.state);
+                self.state = LexerState::InSubstitution;
+            }
+            (LexerState::InQuote(q), c) if c != q => self.current.push(c),
+            (LexerState::InQuote(_), _) => {
+                self.tokens.push(Token::Str(take(&mut self.current)));
+                self.tokens.push(Token::Symbol(ch.into()));
+                self.state = LexerState::Start;
+            }
+            (LexerState::InComment, '\n') => {
+                self.tokens.push(Token::Comment(take(&mut self.current)));
+                self.state = LexerState::Start;
+            }
+            (LexerState::InComment, c) => self.current.push(c),
+        }
+        self
+    }
+}
+
+trait Valid {
+    fn is_variable_char(self) -> bool;
+    fn is_path_char(self) -> bool;
+}
+
+impl Valid for char {
+    fn is_variable_char(self) -> bool {
+        self.is_alphanumeric() || ['_', '{', '}'].contains(&self)
+    }
+
+    fn is_path_char(self) -> bool {
+        self.is_alphanumeric() || ['_', '~', '/', '.', '-'].contains(&self)
     }
 }
