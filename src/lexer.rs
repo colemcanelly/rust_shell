@@ -1,51 +1,91 @@
 use std::mem::take;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    Literal(String),
-    Symbol(String),
-    ControlOperator(String),
-    Identifier(String),
-    Wildcard(String),
-    Str(String),
-    Comment(String),
+#[derive(Debug, Clone)] //PartialEq
+pub enum Token<T>
+where
+    T: AsRef<str> + Clone,
+{
+    Literal(T),
+    Symbol(T),
+    ControlOperator(T),
+    Identifier(T),
+    Wildcard(T),
+    Str(T),
+    Comment(T),
 }
 
-impl Token {
+impl<T, U> PartialEq<Token<U>> for Token<T>
+where
+    T: AsRef<str> + Clone,
+    U: AsRef<str> + Clone,
+{
+    fn eq(&self, other: &Token<U>) -> bool {
+        use Token::*;
+        match (self, other) {
+            (Literal(a), Literal(b))
+            | (Symbol(a), Symbol(b))
+            | (ControlOperator(a), ControlOperator(b))
+            | (Identifier(a), Identifier(b))
+            | (Wildcard(a), Wildcard(b))
+            | (Str(a), Str(b))
+            | (Comment(a), Comment(b)) => a.as_ref() == b.as_ref(),
+            _ => false,
+        }
+    }
+}
+
+impl Token<String> {
     pub fn inner(&self) -> &String {
         match self {
-            Token::Literal(s) => s,
-            Token::Symbol(s) => s,
-            Token::ControlOperator(s) => s,
-            Token::Identifier(s) => s,
-            Token::Wildcard(s) => s,
-            Token::Str(s) => s,
-            Token::Comment(s) => s,
+            Token::Literal(s)
+            | Token::Symbol(s)
+            | Token::ControlOperator(s)
+            | Token::Identifier(s)
+            | Token::Wildcard(s)
+            | Token::Str(s)
+            | Token::Comment(s) => s,
         }
     }
 
     pub fn inner_mut(&mut self) -> &mut String {
         match self {
-            Token::Literal(s) => s,
-            Token::Symbol(s) => s,
-            Token::ControlOperator(s) => s,
-            Token::Identifier(s) => s,
-            Token::Wildcard(s) => s,
-            Token::Str(s) => s,
-            Token::Comment(s) => s,
+            Token::Literal(s)
+            | Token::Symbol(s)
+            | Token::ControlOperator(s)
+            | Token::Identifier(s)
+            | Token::Wildcard(s)
+            | Token::Str(s)
+            | Token::Comment(s) => s,
+        }
+    }
+}
+
+impl<T> Token<T>
+where
+    T: AsRef<str> + Clone + ToString,
+{
+    pub fn inner_to_string(&mut self) -> Token<String> {
+        match self {
+            Token::Literal(s) => Token::Literal(s.to_string()),
+            Token::Symbol(s) => Token::Symbol(s.to_string()),
+            Token::ControlOperator(s) => Token::ControlOperator(s.to_string()),
+            Token::Identifier(s) => Token::Identifier(s.to_string()),
+            Token::Wildcard(s) => Token::Wildcard(s.to_string()),
+            Token::Str(s) => Token::Str(s.to_string()),
+            Token::Comment(s) => Token::Comment(s.to_string()),
         }
     }
 }
 
 pub trait Tokenize {
-    fn tokenize(self) -> Vec<Token>;
+    fn tokenize(self) -> Vec<Token<String>>;
 }
 
 impl<S> Tokenize for S
 where
     S: AsRef<str>,
 {
-    fn tokenize(self) -> Vec<Token> {
+    fn tokenize(self) -> Vec<Token<String>> {
         let mut fsm = self
             .as_ref()
             .trim()
@@ -80,12 +120,12 @@ enum LexerState {
     InComment,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 struct Lexer {
     state: LexerState,
     stack: Vec<LexerState>,
     current: String,
-    tokens: Vec<Token>,
+    tokens: Vec<Token<String>>,
 }
 
 impl Lexer {
