@@ -1,0 +1,104 @@
+Allocations for 1: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 2: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 3: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 2,
+    bytes_allocated: 384,
+    bytes_deallocated: 384,
+    bytes_reallocated: 288,
+}
+Allocations for 4: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 5: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 6: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 7: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 0,
+    bytes_allocated: 96,
+    bytes_deallocated: 96,
+    bytes_reallocated: 0,
+}
+Allocations for 8: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 1,
+    bytes_allocated: 192,
+    bytes_deallocated: 192,
+    bytes_reallocated: 96,
+}
+Allocations for 9: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 2,
+    bytes_allocated: 384,
+    bytes_deallocated: 384,
+    bytes_reallocated: 288,
+}
+Allocations for 10: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 1,
+    bytes_allocated: 192,
+    bytes_deallocated: 192,
+    bytes_reallocated: 96,
+}
+Allocations for 11: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 1,
+    bytes_allocated: 192,
+    bytes_deallocated: 192,
+    bytes_reallocated: 96,
+}
+Allocations for 12: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 2,
+    bytes_allocated: 384,
+    bytes_deallocated: 384,
+    bytes_reallocated: 288,
+}
+Allocations for 13: Stats {
+    allocations: 1,
+    deallocations: 1,
+    reallocations: 3,
+    bytes_allocated: 768,
+    bytes_deallocated: 768,
+    bytes_reallocated: 672,
+}

@@ -10,3 +10,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "rush"
 path = "src/main.rs"
+
+[dependencies]
+stats_alloc = "0.1.10"
