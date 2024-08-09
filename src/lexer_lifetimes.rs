@@ -24,6 +24,7 @@ pub enum Token<'t> {
     Equals,    // ==
     NotEquals, // !=
     Append,    // >>
+    Shell,     // $(
 
     // Reserved Keywords
     If,
@@ -35,12 +36,10 @@ pub enum Token<'t> {
     Literal(&'t str),
     Path(&'t str),
     Flag(&'t str),      // -<flag> | --<flag>
+    Ident(&'t str),     // $IDENT
     DoubleStr(&'t str), // "<string>"
     SingleStr(&'t str), // '<string>'
-
-    FormatStr(&'t str),   // `<STR>${ARG}<STR>$(SHELL)<STR>`
-    FormatIdent(&'t str), // `<STR>${ARG}<STR>$(SHELL)<STR>`
-    FormatShell(&'t str), // `<STR>${ARG}<STR>$(SHELL)<STR>`
+    FormatStr(&'t str), // `<STR>${ARG}<STR>$(SHELL)<STR>`
 }
 
 impl Token<'_> {
@@ -51,10 +50,10 @@ impl Token<'_> {
             Invalid => 0,
             Semicolon | Pipe | BackTick | Asterisk | Dollar | LeftParenthesis
             | RightParenthesis | LeftBrace | RightBrace | LessThan | MoreThan | Assign | Bang => 1,
-            Equals | NotEquals | Append | If | Fi => 2,
+            Equals | NotEquals | Append | Shell | If | Fi => 2,
             Then | Else => 4,
-            Literal(s) | Path(s) | Flag(s) | DoubleStr(s) | SingleStr(s) | FormatStr(s)
-            | FormatIdent(s) | FormatShell(s) => s.len(),
+            Literal(s) | Path(s) | Flag(s) | Ident(s) | DoubleStr(s) | SingleStr(s)
+            | FormatStr(s) => s.len(),
         }
     }
 }
@@ -83,20 +82,20 @@ impl<'a> Lexer<'a> {
         use Token::*;
 
         let mut peek = self.it.clone();
-        peek.next()
-            .map(|c| match (c, peek.next().unwrap_or_default()) {
-                ('`', _) => {
-                    self.it.next();
-                    BackTick
-                }
-                ('$', '(') => FormatShell(self.it.read_fexpr().str_until(')')),
-                ('$', _) => FormatIdent(self.it.read_ident().str()),
-                _ => FormatStr(self.it.read_fstring().str()),
-            })
+        peek.next().map(|c| {
+            let (tok, len) = match (c, peek.next().unwrap_or_default()) {
+                ('`', _) => (BackTick, 1),
+                ('$', '(') => (Shell, 2),
+                ('$', _) => return Ident(self.it.read_ident().str()),
+                _ => return FormatStr(self.it.read_fstring().str()),
+            };
+            self.it.by_ref().take(len).for_each(|_| {});
+            tok
+        })
     }
 }
 
-impl<'a> Iterator for Lexer<'a> {
+impl<'a> Iterator for Lexer<'a> { 
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -112,11 +111,12 @@ impl<'a> Iterator for Lexer<'a> {
                 '=' if Some('=') == peek.next() => (Equals, 2),
                 '!' if Some('=') == peek.next() => (NotEquals, 2),
                 '>' if Some('>') == peek.next() => (Append, 2),
+                '$' if Some('(') == peek.next() => (Shell, 2),
                 ';' => (Semicolon, 1),
                 '|' => (Pipe, 1),
                 '`' => (BackTick, 1),
                 '*' => (Asterisk, 1),
-                '$' => (Dollar, 1),
+                '$' if peek.next().is_some_and(|w| w.is_whitespace()) => (Dollar, 1),
                 '(' => (LeftParenthesis, 1),
                 ')' => (RightParenthesis, 1),
                 '{' => (LeftBrace, 1),
@@ -135,6 +135,7 @@ impl<'a> Iterator for Lexer<'a> {
                         lit => Literal(lit),
                     }
                 }
+                '$' => return Ident(self.it.read_ident().str()),
                 '-' => return Flag(self.it.read_literal().str()),
                 '"' => return DoubleStr(self.it.read().str_until('\"')),
                 '\'' => return SingleStr(self.it.read().str_until('\'')),
@@ -174,10 +175,6 @@ trait Read: Clone + Iterator<Item = char> {
 
     fn read_fstring(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
         (self.clone().skip(1).take_while(Self::FSTRING), self)
-    }
-
-    fn read_fexpr(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1).take_while(|&c| c != '`'), self)
     }
 }
 impl<'a> Read for Chars<'a> {}
