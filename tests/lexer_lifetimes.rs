@@ -89,7 +89,7 @@ fn pipes() {
             .collect::<Vec<Token>>(),
         vec![
             Literal("ls"),
-            Wildcard("./src/*.rs"),
+            Path("./src/*.rs"),
             Pipe,
             Literal("xargs"),
             Literal("basename"),
@@ -116,15 +116,32 @@ fn pipes() {
 #[test]
 fn io_redirections() {
     assert_eq!(
-        r#"cat << EOF > file | wc -c | tr -d " " > file2"#
+        r#"program > log"#.lexer().collect::<Vec<Token>>(),
+        vec![Literal("program"), MoreThan, Literal("log")]
+    );
+
+    assert_eq!(
+        "shell <src".lexer().collect::<Vec<Token>>(),
+        vec![Literal("shell"), LessThan, Literal("src")]
+    );
+
+    assert_eq!(
+        "shell <src >log".lexer().collect::<Vec<Token>>(),
+        vec![
+            Literal("shell"),
+            LessThan,
+            Literal("src"),
+            MoreThan,
+            Literal("log")
+        ]
+    );
+
+    assert_eq!(
+        r#"history | wc -c | tr -d " " > file2"#
             .lexer()
             .collect::<Vec<Token>>(),
         vec![
-            Literal("cat"),
-            Symbol("<<"),
-            Literal("EOF"),
-            MoreThan,
-            Literal("file"),
+            Literal("history"),
             Pipe,
             Literal("wc"),
             Flag("-c"),
@@ -152,7 +169,7 @@ fn io_redirections() {
 fn variables() {
     assert_eq!(
         "echo $VAR".lexer().collect::<Vec<Token>>(),
-        vec![Literal("echo"), Dollar, Literal("VAR")]
+        vec![Literal("echo"), Ident("$VAR")]
     );
     assert_eq!(
         r#"echo "this is $VAR right here""#.lexer().collect::<Vec<Token>>(),
@@ -160,8 +177,7 @@ fn variables() {
             Literal("echo"),
             Symbol("\""),
             Str("this is "),
-            Dollar,
-            Literal("VAR"),
+            Ident("VAR"),
             Str(" right here"),
             Symbol("\"")
         ]
@@ -176,8 +192,7 @@ fn parenthesis() {
         "echo $(ls -a)".lexer().collect::<Vec<Token>>(),
         vec![
             Literal("echo"),
-            Dollar,
-            LeftParenthesis,
+            Shell,
             Literal("ls"),
             Flag("-a"),
             RightParenthesis
@@ -192,8 +207,7 @@ fn parenthesis() {
             Flag("-e"),
             Symbol("\""),
             Str(r"Here are the contents of the directory: [\n"),
-            Dollar,
-            LeftParenthesis,
+            Shell,
             Literal("ls"),
             Flag("-a"),
             RightParenthesis,
@@ -207,8 +221,7 @@ fn parenthesis() {
             Literal("echo"),
             Symbol("\""),
             Str(""),
-            Dollar,
-            LeftParenthesis,
+            Shell,
             Literal("ls"),
             Flag("-a"),
             RightParenthesis,
@@ -231,8 +244,7 @@ fn complex() {
             Pipe,
             Literal("grep"),
             Literal("test"),
-            Dollar,
-            Literal("VAR"),
+            Ident("$VAR"),
             // Comment("# This is a comment")
         ]
     );

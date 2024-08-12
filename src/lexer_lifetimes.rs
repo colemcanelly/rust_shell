@@ -95,7 +95,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl<'a> Iterator for Lexer<'a> { 
+impl<'a> Iterator for Lexer<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -115,7 +115,7 @@ impl<'a> Iterator for Lexer<'a> {
                 ';' => (Semicolon, 1),
                 '|' => (Pipe, 1),
                 '`' => (BackTick, 1),
-                '*' => (Asterisk, 1),
+                '*' if peek.next().is_some_and(|w| w.is_whitespace()) => (Asterisk, 1),
                 '$' if peek.next().is_some_and(|w| w.is_whitespace()) => (Dollar, 1),
                 '(' => (LeftParenthesis, 1),
                 ')' => (RightParenthesis, 1),
@@ -125,7 +125,7 @@ impl<'a> Iterator for Lexer<'a> {
                 '>' => (MoreThan, 1),
                 '=' => (Assign, 1),
                 '!' => (Bang, 1),
-                '.' | '~' | '/' => return Path(self.it.read_path().str()),
+                '.' | '~' | '/' | '*' => return Path(self.it.read_path().str()),
                 'a'..='z' | 'A'..='Z' | '_' => {
                     return match self.it.read_literal().str() {
                         "if" => If,
@@ -152,10 +152,10 @@ impl<'a> Iterator for Lexer<'a> {
 }
 
 trait Read: Clone + Iterator<Item = char> {
-    const PATH: fn(&char) -> bool = |&c| c == '/' || Self::LITERAL(&c);
-    const LITERAL: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    const PATH: fn(&char) -> bool = |&c| Self::LITERAL(&c) || matches!(c, '/' | '*');
+    const LITERAL: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-');
     const IDENT: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || c == '_';
-    const FSTRING: fn(&char) -> bool = |&c| c != '`' && c != '$';
+    const FSTRING: fn(&char) -> bool = |&c| !matches!(c, '`' | '$');
 
     fn read(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
         (self.clone().skip(1), self)
