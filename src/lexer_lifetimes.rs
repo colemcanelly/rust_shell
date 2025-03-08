@@ -1,4 +1,5 @@
-use std::str::Chars;
+use core::str;
+use core::cell::Cell;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token<'t> {
@@ -6,25 +7,25 @@ pub enum Token<'t> {
 
     // 1 wide
     // Newline,
-    Semicolon,        // ;
-    Pipe,             // |
-    BackTick,         // `
-    Asterisk,         // *
-    Dollar,           // $
-    LeftParenthesis,  // (
-    RightParenthesis, // )
-    LeftBrace,        // {
-    RightBrace,       // }
-    LessThan,         // <
-    MoreThan,         // >
-    Assign,           // =
-    Bang,             // !
+    #[doc = ";"] Semicolon,        // ;
+    #[doc = "|"] Pipe,             // |
+    #[doc = "`"] BackTick,         // `
+    #[doc = "*"] Asterisk,         // *
+    #[doc = "$"] Dollar,           // $
+    #[doc = "("] LeftParenthesis,  // (
+    #[doc = ")"] RightParenthesis, // )
+    #[doc = "{"] LeftBrace,        // {
+    #[doc = "}"] RightBrace,       // }
+    #[doc = "<"] LessThan,         // <
+    #[doc = ">"] MoreThan,         // >
+    #[doc = "="] Assign,
+    #[doc = "="] Bang,             // !
 
     // 2 wide
-    Equals,    // ==
-    NotEquals, // !=
-    Append,    // >>
-    Shell,     // $(
+    #[doc = "=="] Equals,    // ==
+    #[doc = "!="] NotEquals, // !=
+    #[doc = ">>"] Append,    // >>
+    #[doc = "$("] Shell,     // $(
 
     // Reserved Keywords
     If,
@@ -35,7 +36,7 @@ pub enum Token<'t> {
     // Variadic
     Literal(&'t str),
     Path(&'t str),
-    Flag(&'t str),      // -<flag> | --<flag>
+    Flag(&'t str),      // <-flag> | <--flag>
     Ident(&'t str),     // $IDENT
     DoubleStr(&'t str), // "<string>"
     SingleStr(&'t str), // '<string>'
@@ -61,37 +62,79 @@ impl Token<'_> {
 pub trait IntoLexer<'l> {
     fn lexer(&'l self) -> Lexer<'l>;
 }
-
 impl<'l> IntoLexer<'l> for &str {
-    fn lexer(&'l self) -> Lexer<'l> {
-        Lexer {
-            line: self,
-            it: self.chars(),
-        }
-    }
+    fn lexer(&'l self) -> Lexer<'l> { Lexer::new(self) }
 }
 
 #[derive(Debug)]
 pub struct Lexer<'l> {
-    line: &'l &'l str,
-    it: Chars<'l>,
+    line: &'l [u8],
+    idx: Cell<usize>
 }
 
 impl<'a> Lexer<'a> {
-    pub fn next_format_arg(&mut self) -> Option<Token<'a>> {
-        use Token::*;
+    pub fn new(s: &'a &'a str) -> Self {
+        Lexer { line: s.as_bytes(), idx: Cell::new(0) }
+    }
 
-        let mut peek = self.it.clone();
-        peek.next().map(|c| {
-            let (tok, len) = match (c, peek.next().unwrap_or_default()) {
-                ('`', _) => (BackTick, 1),
-                ('$', '(') => (Shell, 2),
-                ('$', _) => return Ident(self.it.read_ident().str()),
-                _ => return FormatStr(self.it.read_fstring().str()),
-            };
-            self.it.by_ref().take(len).for_each(|_| {});
-            tok
-        })
+    pub fn fstring_iter(&'a mut self) -> FstringLexer<'a> {
+        FstringLexer(self)
+    }
+}
+
+trait Scanner<'l> {
+    fn peeker(&self) -> impl FnMut() -> Option<char>;
+    
+    fn current(&self) -> Option<char>;
+    fn advance(&self, n: usize) -> &Self;
+    fn advance_while(&self, predicate: impl Fn(&char) -> bool) -> usize;
+    fn read_str_while(&self, predicate: impl Fn(&char) -> bool) -> &'l str;
+
+    const IS_PATH: fn(&char) -> bool = |&c| Self::IS_LITERAL(&c) || c == '*';
+    const IS_LITERAL: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/');
+    const IS_IDENT: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '$' | '!');
+    const IS_FSTRING: fn(&char) -> bool = |&c| !matches!(c, '`' | '$');
+
+    fn read_path(&self) -> &'l str { self.read_str_while(Self::IS_PATH) }
+    fn read_literal(&self) -> &'l str { self.read_str_while(Self::IS_LITERAL) }
+    fn read_ident(&self) -> &'l str { self.advance(1).read_str_while(Self::IS_IDENT) }
+    fn read_fstring(&self) -> &'l str { self.read_str_while(Self::IS_FSTRING) }
+    fn read_delim_str(&self, delim: char) -> &'l str { 
+        let ret = self.advance(1).read_str_while(|&c| c != delim);
+        self.advance(1);
+        ret
+    }
+}
+
+impl<'l> Scanner<'l> for Lexer<'l> {
+    fn peeker(&self) -> impl FnMut() -> Option<char> {
+        let mut pos = self.idx.get();
+        move || {
+            let ret = self.line.get(pos).map(|c| *c as char);
+            pos += 1;
+            ret
+        }
+    }
+
+    fn current(&self) -> Option<char> {
+        self.line.get(self.idx.get()).map(|c| *c as char)
+    }
+
+    fn advance(&self, n: usize) -> &Self {
+        self.idx.set(self.idx.get() + n);
+        self
+    }
+
+    fn advance_while(&self, predicate: impl Fn(&char) -> bool) -> usize {
+        let n = self.line[self.idx.get()..].iter().take_while(|&&c| predicate(&(c as char))).count();
+        self.advance(n);
+        n
+    }
+
+    fn read_str_while(&self, predicate: impl Fn(&char) -> bool) -> &'l str {
+        let start = self.idx.get();
+        self.advance(1).advance_while(predicate);
+        unsafe { str::from_utf8_unchecked(&self.line[start..self.idx.get()]) }
     }
 }
 
@@ -101,22 +144,24 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         use Token::*;
 
-        let space_before = self.it.clone().take_while(|&c| c == ' ').count();
-        self.it.by_ref().take(space_before).for_each(|_| {});
+        let _space_before = self.advance_while(|&c| c == ' ');
+        if let Some('#') = self.current() {
+            self.advance_while(|&c| c != '\n');
+        }
         // println!("{} spaces before token", space_before);
 
-        let mut peek = self.it.clone();
-        peek.next().map(|c: char| -> Token {
+        let mut peek = self.peeker();
+        peek().map(|c: char| -> Token {
             let (token, len) = match c {
-                '=' if Some('=') == peek.next() => (Equals, 2),
-                '!' if Some('=') == peek.next() => (NotEquals, 2),
-                '>' if Some('>') == peek.next() => (Append, 2),
-                '$' if Some('(') == peek.next() => (Shell, 2),
+                '=' if Some('=') == peek() => (Equals, 2),
+                '!' if Some('=') == peek() => (NotEquals, 2),
+                '>' if Some('>') == peek() => (Append, 2),
+                '$' if Some('(') == peek() => (Shell, 2),
                 ';' => (Semicolon, 1),
                 '|' => (Pipe, 1),
                 '`' => (BackTick, 1),
-                '*' if peek.next().is_some_and(|w| w.is_whitespace()) => (Asterisk, 1),
-                '$' if peek.next().is_some_and(|w| w.is_whitespace()) => (Dollar, 1),
+                '*' if peek().is_some_and(char::is_whitespace) => (Asterisk, 1),
+                '$' if peek().is_some_and(char::is_whitespace) => (Dollar, 1),
                 '(' => (LeftParenthesis, 1),
                 ')' => (RightParenthesis, 1),
                 '{' => (LeftBrace, 1),
@@ -125,9 +170,9 @@ impl<'a> Iterator for Lexer<'a> {
                 '>' => (MoreThan, 1),
                 '=' => (Assign, 1),
                 '!' => (Bang, 1),
-                '.' | '~' | '/' | '*' => return Path(self.it.read_path().str()),
+                '.' | '~' | '/' | '*' => return Path(self.read_path()),
                 'a'..='z' | 'A'..='Z' | '_' => {
-                    return match self.it.read_literal().str() {
+                    return match self.read_literal() {
                         "if" => If,
                         "then" => Then,
                         "else" => Else,
@@ -135,81 +180,40 @@ impl<'a> Iterator for Lexer<'a> {
                         lit => Literal(lit),
                     }
                 }
-                '$' => return Ident(self.it.read_ident().str()),
-                '-' => return Flag(self.it.read_literal().str()),
-                '"' => return DoubleStr(self.it.read().str_until('\"')),
-                '\'' => return SingleStr(self.it.read().str_until('\'')),
+                '$' => return Ident(self.read_ident()),
+                '-' => return Flag(self.read_literal()),
+                '"' => return DoubleStr(self.read_delim_str('"')),
+                '\'' => return SingleStr(self.read_delim_str('\'')),
                 c => {
                     panic!("Invalid character! [{c}]");
                     // (Invalid, 1)
                 }
             };
             // Advance the iterator to the current character
-            self.it.by_ref().take(len).for_each(|_| {});
+            self.advance(len);
             token
         })
     }
 }
 
-trait Read: Clone + Iterator<Item = char> {
-    const PATH: fn(&char) -> bool = |&c| Self::LITERAL(&c) || matches!(c, '/' | '*');
-    const LITERAL: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-');
-    const IDENT: fn(&char) -> bool = |&c| c.is_ascii_alphanumeric() || c == '_';
-    const FSTRING: fn(&char) -> bool = |&c| !matches!(c, '`' | '$');
+pub struct FstringLexer<'f>(&'f mut Lexer<'f>);
+impl<'a> Iterator for FstringLexer<'a> {
+    type Item = Token<'a>;
 
-    fn read(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1), self)
-    }
+    fn next(&mut self) -> Option<Self::Item> {
+        use Token::*;
 
-    fn read_path(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1).take_while(Self::PATH), self)
-    }
-
-    fn read_literal(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1).take_while(Self::LITERAL), self)
-    }
-
-    fn read_ident(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1).take_while(Self::IDENT), self)
-    }
-
-    fn read_fstring(&mut self) -> (impl Iterator<Item = char>, &mut Self) {
-        (self.clone().skip(1).take_while(Self::FSTRING), self)
-    }
-}
-impl<'a> Read for Chars<'a> {}
-
-trait ReadIters<'r> {
-    fn str_until(self, esc: char) -> &'r str;
-    fn str(self) -> &'r str;
-}
-
-impl<'r, I> ReadIters<'r> for (I, &mut Chars<'r>)
-where
-    I: Iterator<Item = char>,
-{
-    fn str_until(self, esc: char) -> &'r str {
-        let mut stop = false;
-        (
-            self.0.map_while(move |c| -> Option<char> {
-                (!stop).then_some({
-                    stop = c == esc;
-                    c
-                })
-            }),
-            self.1,
-        )
-            .str()
-    }
-
-    fn str(self) -> &'r str {
-        let (peek, it) = self;
-        let s = it.as_str();
-        let len = peek.fold(it.next().unwrap().len_utf8(), |l, c| {
-            it.next();
-            l + c.len_utf8()
-        });
-        &s[..len]
+        let mut peek = self.0.peeker();
+        peek().map(|c| {
+            let (tok, len) = match (c, peek().unwrap_or_default()) {
+                ('`', _) => (BackTick, 1),
+                ('$', '(') => (Shell, 2),
+                ('$', _) => return Ident(self.0.read_ident()),
+                _ => return FormatStr(self.0.read_fstring()),
+            };
+            self.0.advance(len);
+            tok
+        })
     }
 }
 

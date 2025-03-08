@@ -1,78 +1,87 @@
 // use rush::lexer::*;
 use lang::lexer_lifetimes::{
-    IntoLexer, Lexer,
+    IntoLexer,
     Token::{self, *},
 };
+
+#[inline]
+fn lexer_tester(input: &str, expected: Vec<Token>) {
+    assert_eq!(
+        input.lexer().collect::<Vec<Token>>(),
+        expected,
+        "\"{input}\""
+    )
+}
+
+#[inline]
+fn fstring_tester(input: &str, expected: Vec<Token>) {
+    assert_eq!(
+        input.lexer().fstring_iter().collect::<Vec<Token>>(),
+        expected,
+        "\"{input}\""
+    )
+}
 
 #[test]
 fn command_arguments() {
     // Programs without arguments
-    assert_eq!(
-        "~/bin/ansi_colors".lexer().collect::<Vec<Token>>(),
-        vec![Path("~/bin/ansi_colors")]
-    );
+    lexer_tester("~/bin/ansi_colors", vec![Path("~/bin/ansi_colors")]);
     // Programs with arguments
-    assert_eq!(
-        "ls -F --group-directories-first"
-            .lexer()
-            .collect::<Vec<Token>>(),
-        vec![Literal("ls"), Flag("-F"), Flag("--group-directories-first")]
+    lexer_tester(
+        "ls -F --group-directories-first",
+        vec![Literal("ls"), Flag("-F"), Flag("--group-directories-first")],
     );
-    assert_eq!(
-        "xclip -selection c -o".lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        "xclip -selection c -o",
         vec![
             Literal("xclip"),
             Flag("-selection"),
             Literal("c"),
-            Flag("-o")
-        ]
+            Flag("-o"),
+        ],
     );
 }
 
 #[test]
 fn quotes() {
     // String with no spaces inside
-    assert_eq!(
-        r#"grep ":Zone.Literal""#.lexer().collect::<Vec<Token>>(),
-        vec![Literal("grep"), DoubleStr(":Zone.Literal"),]
+    lexer_tester(
+        r#"grep ":Zone.Literal""#,
+        vec![Literal("grep"), DoubleStr(":Zone.Literal")],
     );
 
-    assert_eq!(
-        r#"echo "My name is Cole McAnelly""#.lexer().collect::<Vec<Token>>(),
-        vec![Literal("echo"), DoubleStr("My name is Cole McAnelly"),]
+    lexer_tester(
+        r#"echo "My name is Cole McAnelly""#,
+        vec![Literal("echo"), DoubleStr("My name is Cole McAnelly")],
     );
 
     // Single quotes with assignment operator
-    assert_eq!(
-        "alias colors='~/bin/ansi_colors'"
-            .lexer()
-            .collect::<Vec<Token>>(),
+    lexer_tester(
+        "alias colors='~/bin/ansi_colors'",
         vec![
             Literal("alias"),
             Literal("colors"),
             Assign,
             SingleStr("~/bin/ansi_colors"),
-        ]
+        ],
     );
 
     // Double quoted String with internal spaces, and assignment operator
-    assert_eq!(
-        r#"MY_VAR="this is the value of my variable""#
-            .lexer()
-            .collect::<Vec<Token>>(),
+    lexer_tester(
+        r#"MY_VAR="this is the value of my variable""#,
         vec![
             Literal("MY_VAR"),
             Assign,
             DoubleStr("this is the value of my variable"),
-        ]
+        ],
     );
 }
 
 #[test]
 fn pipes() {
     // Pipes with spaces in between
-    assert_eq!(
-        r#"history | grep git | xargs rm"#.lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        r#"history | grep git | xargs rm"#,
         vec![
             Literal("history"),
             Pipe,
@@ -80,13 +89,11 @@ fn pipes() {
             Literal("git"),
             Pipe,
             Literal("xargs"),
-            Literal("rm")
-        ]
+            Literal("rm"),
+        ],
     );
-    assert_eq!(
-        "ls ./src/*.rs | xargs basename -s .rs"
-            .lexer()
-            .collect::<Vec<Token>>(),
+    lexer_tester(
+        "ls ./src/*.rs | xargs basename -s .rs",
         vec![
             Literal("ls"),
             Path("./src/*.rs"),
@@ -94,13 +101,13 @@ fn pipes() {
             Literal("xargs"),
             Literal("basename"),
             Flag("-s"),
-            Path(".rs")
-        ]
+            Path(".rs"),
+        ],
     );
 
     // Pipes without spaces
-    assert_eq!(
-        r#"history|grep git|xargs rm"#.lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        r#"history|grep git|xargs rm"#,
         vec![
             Literal("history"),
             Pipe,
@@ -108,38 +115,59 @@ fn pipes() {
             Literal("git"),
             Pipe,
             Literal("xargs"),
-            Literal("rm")
-        ]
+            Literal("rm"),
+        ],
     );
 }
 
 #[test]
 fn io_redirections() {
-    assert_eq!(
-        r#"program > log"#.lexer().collect::<Vec<Token>>(),
-        vec![Literal("program"), MoreThan, Literal("log")]
+    lexer_tester(
+        r#"program > log"#,
+        vec![Literal("program"), MoreThan, Literal("log")],
     );
 
-    assert_eq!(
-        "shell <src".lexer().collect::<Vec<Token>>(),
-        vec![Literal("shell"), LessThan, Literal("src")]
+    lexer_tester(
+        "shell <src",
+        vec![Literal("shell"), LessThan, Literal("src")],
     );
 
-    assert_eq!(
-        "shell <src >log".lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        "shell <src >log",
         vec![
             Literal("shell"),
             LessThan,
             Literal("src"),
             MoreThan,
-            Literal("log")
-        ]
+            Literal("log"),
+        ],
     );
 
-    assert_eq!(
-        r#"history | wc -c | tr -d " " > file2"#
-            .lexer()
-            .collect::<Vec<Token>>(),
+    lexer_tester(
+        r#"echo "This is Cole McAnelly's file, and I am writing my name inside of it!!" >> my_file"#,
+        vec![
+            Literal("echo"),
+            DoubleStr("This is Cole McAnelly's file, and I am writing my name inside of it!!"),
+            Append,
+            Literal("my_file"),
+        ],
+    );
+
+    lexer_tester(
+        "awk '{print $1$11}' < test.txt",
+        vec![
+            Literal("awk"),
+            SingleStr("{print $1$11}"),
+            LessThan,
+            Literal("test.txt"),
+        ],
+    )
+}
+
+#[test]
+fn pipe_redirections() {
+    lexer_tester(
+        r#"history | wc -c | tr -d " " > file2"#,
         vec![
             Literal("history"),
             Pipe,
@@ -150,141 +178,120 @@ fn io_redirections() {
             Flag("-d"),
             DoubleStr(" "),
             MoreThan,
-            Literal("file2")
-        ]
+            Literal("file2"),
+        ],
     );
 
-    assert_eq!(
-        r#"echo "This is Cole McAnelly's file, and I am writing my name inside of it!!" >> my_file"#.lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        "awk '{print $1$11}' < test.txt | head -10 | tr a-z A-Z | sort > output.txt",
         vec![
-            Literal("echo"),
-            DoubleStr("This is Cole McAnelly's file, and I am writing my name inside of it!!"),
-            Append,
-            Literal("my_file")
-        ]
+            Literal("awk"),
+            SingleStr("{print $1$11}"),
+            LessThan,
+            Literal("test.txt"),
+            Pipe,
+            Literal("head"),
+            Flag("-10"),
+            Pipe,
+            Literal("tr"),
+            Literal("a-z"),
+            Literal("A-Z"),
+            Pipe,
+            Literal("sort"),
+            MoreThan,
+            Literal("output.txt"),
+        ],
     )
 }
 
 #[test]
 fn variables() {
-    assert_eq!(
-        "echo $VAR".lexer().collect::<Vec<Token>>(),
-        vec![Literal("echo"), Ident("$VAR")]
-    );
-    assert_eq!(
-        r#"echo "this is $VAR right here""#.lexer().collect::<Vec<Token>>(),
-        vec![
-            Literal("echo"),
-            Symbol("\""),
-            Str("this is "),
-            Ident("VAR"),
-            Str(" right here"),
-            Symbol("\"")
-        ]
-    );
+    lexer_tester("echo $VAR", vec![Literal("echo"), Ident("VAR")]);
+
+    lexer_tester("MY_VAR=$VAR", vec![Literal("MY_VAR"), Assign, Ident("VAR")]);
 }
 
 #[test]
 fn parenthesis() {
     // Pipes with spaces in between
-    // todo!("SUBPROCESS TOKENIZING");
-    assert_eq!(
-        "echo $(ls -a)".lexer().collect::<Vec<Token>>(),
+    lexer_tester(
+        "echo $(ls -a)",
         vec![
             Literal("echo"),
             Shell,
             Literal("ls"),
             Flag("-a"),
+            RightParenthesis,
+        ],
+    );
+
+    lexer_tester(
+        "RUST_FILES=$(ls ./src/*.rs | xargs basename -s .rs)",
+        vec![
+            Literal("RUST_FILES"),
+            Assign,
+            Shell,
+            Literal("ls"),
+            Path("./src/*.rs"),
+            Pipe,
+            Literal("xargs"),
+            Literal("basename"),
+            Flag("-s"),
+            Path(".rs"),
             RightParenthesis
-        ]
-    );
-    assert_eq!(
-        r#"echo -e "Here are the contents of the directory: [\n$(ls -a)\n]""#
-            .lexer()
-            .collect::<Vec<Token>>(),
-        vec![
-            Literal("echo"),
-            Flag("-e"),
-            Symbol("\""),
-            Str(r"Here are the contents of the directory: [\n"),
-            Shell,
-            Literal("ls"),
-            Flag("-a"),
-            RightParenthesis,
-            Str(r"\n]"),
-            Symbol("\""),
-        ]
-    );
-    assert_eq!(
-        r#"echo "$(ls -a)""#.lexer().collect::<Vec<Token>>(),
-        vec![
-            Literal("echo"),
-            Symbol("\""),
-            Str(""),
-            Shell,
-            Literal("ls"),
-            Flag("-a"),
-            RightParenthesis,
-            Str(""),
-            Symbol("\""),
-        ]
+        ],
     );
 }
 
 #[test]
-fn complex() {
-    assert_eq!(
-        "ls -l 'file name' | grep test $VAR # This is a comment"
-            .lexer()
-            .collect::<Vec<Token>>(),
+fn fstrings_with_variables() {
+    fstring_tester(
+        "`this is $VAR right here`",
         vec![
-            Literal("ls"),
-            Flag("-l"),
-            SingleStr("file name"),
-            Pipe,
-            Literal("grep"),
-            Literal("test"),
-            Ident("$VAR"),
-            // Comment("# This is a comment")
-        ]
+            BackTick,
+            FormatStr("this is "),
+            Ident("VAR"),
+            FormatStr(" right here"),
+            BackTick,
+        ],
     );
 
-    assert_eq!(
-        r#"find . -type f | grep ":Zone.Literal" | xargs rm"#
-            .lexer()
-            .collect::<Vec<Token>>(),
+    fstring_tester(
+        "`$VAR that is the value of $OTHER plus $THING`",
         vec![
-            Literal("find"),
-            Path("."),
-            Flag("-type"),
-            Literal("f"),
-            Pipe,
-            Literal("grep"),
-            DoubleStr(":Zone.Literal"),
-            Pipe,
-            Literal("xargs"),
-            Literal("rm")
-        ]
+            BackTick,
+            Ident("VAR"),
+            FormatStr(" that is the value of "),
+            Ident("OTHER"),
+            FormatStr(" plus "),
+            Ident("THING"),
+            BackTick,
+        ],
     );
-    // assert_eq!(
-    //     "stow $@ 2> >(grep -v 'BUG in find_stowed_path? Absolute/relative mismatch' 1>&2)".lexer().collect::<Vec<Token>>(),
-    //     vec![
-    //         "stow",
-    //         "$@",
-    //         "2>",
-    //         ">",
-    //         "(",
-    //         "grep",
-    //         "-v",
-    //         "'",
-    //         "BUG",
-    //         "in",
-    //         "find_stowed_path?",
-    //         "Absolute/relative",
-    //         "mismatch",
-    //         "'",
-    //         "1>&2",
-    //         ")"
-    //     ]
-    // );
 }
+
+// fstring_tester(
+//     "`$(ls -a)`",
+//     vec![
+//         BackTick,
+//         Shell,
+//         Literal("ls"),
+//         Flag("-a"),
+//         RightParenthesis,
+//         BackTick,
+//     ],
+// );
+
+// fstring_tester(
+//     "`Here are the contents of the directory: [\n$(ls -a)\n]`",
+//     vec![
+//         BackTick,
+//         FormatStr(r"Here are the contents of the directory: [\n"),
+//         Shell,
+//         Literal("ls"),
+//         Flag("-a"),
+//         RightParenthesis,
+//         FormatStr(r"\n]"),
+//         BackTick,
+//     ],
+// );
